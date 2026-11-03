@@ -1,0 +1,38 @@
+-- Run this once in the Supabase SQL editor.
+-- The anon key in the app can read and write these tables.
+-- Keep the project URL private. This is a household log, not a public API.
+-- entries.data.person and days.person keep the three logs separate.
+-- foods.data.listId is "home" for Surya and Sahi, or "nonu" for Nonu.
+
+create table if not exists foods (
+  id text primary key,
+  data jsonb not null
+);
+
+create table if not exists entries (
+  id text primary key,
+  data jsonb not null
+);
+
+create table if not exists days (
+  person text not null,
+  date text not null,
+  exercise text default '',
+  burned numeric default 0,
+  primary key (person, date)
+);
+
+create table if not exists goals (
+  person text primary key,
+  data jsonb not null
+);
+
+alter table foods enable row level security;
+alter table entries enable row level security;
+alter table days enable row level security;
+alter table goals enable row level security;
+
+create policy "household foods" on foods for all using (true) with check (true);
+create policy "household entries" on entries for all using (true) with check (true);
+create policy "household days" on days for all using (true) with check (true);
+create policy "household goals" on goals for all using (true) with check (true);

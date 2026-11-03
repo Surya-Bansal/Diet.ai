@@ -1,0 +1,14 @@
+Diet log for Surya, Sahi, and Nonu.
+
+The site is the folder you are in. It works on a phone browser before the database is connected, but each phone then has its own copy.
+
+Shared database, free:
+1. Create a free project at https://supabase.com
+2. Open the SQL editor and run supabase/schema.sql
+3. In Project Settings, API, copy the project URL and the anon public key
+4. Deploy this folder on Cloudflare Pages (free). Drag the folder in, or connect a git repo. Build command: none. Output directory: /
+5. On each phone, open the site, go to Goals, Shared database, paste the URL and anon key, and tap Connect
+
+Optional USDA key from https://fdc.nal.usda.gov/api-key-signup.html makes plain-food search better. Indian dishes and Open Food Facts work without it.
+
+Each person picks their name at the top. Days and the downloaded log stay separate. Surya and Sahi share one food list. Nonu has her own.
