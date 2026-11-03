@@ -6,10 +6,15 @@
   <meta name="theme-color" content="#121412">
   <title>Diet log</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="app"></div>
   <script type="module" src="app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+  </script>
 </body>
 </html>

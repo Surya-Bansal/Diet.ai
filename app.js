@@ -1,6 +1,6 @@
 import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
-  scaleFood, sumEntries, hitCount, foodsText, mealGroups,
+  scaleFood, sumEntries, hitCount, foodsText, mealGroups, microValue,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
@@ -54,7 +54,15 @@ function personName() {
 }
 
 function goals() {
-  return state.goals[person] || defaultGoals()[person];
+  const base = defaultGoals()[person];
+  const saved = state.goals?.[person];
+  if (!saved) return base;
+  return {
+    ...base,
+    ...saved,
+    vitamins: { ...base.vitamins, ...(saved.vitamins || {}) },
+    minerals: { ...base.minerals, ...(saved.minerals || {}) },
+  };
 }
 
 function dayEntries() {
@@ -279,15 +287,16 @@ function logView() {
     if (!logFrom) logFrom = dates[dates.length - 1];
     if (!logTo) logTo = dates[0];
   }
-  const rows = dates.map((d) => dayButton(d, byDate.get(d))).join("");
   const readyRange = logFrom && logTo && logFrom <= logTo;
   const ranged = readyRange ? dates.filter((d) => d >= logFrom && d <= logTo) : [];
   const rangeRows = ranged.map((d) => dayButton(d, byDate.get(d))).join("");
-  const rangeNote = !logFrom || !logTo
-    ? "Choose a start and an end."
-    : logFrom > logTo
-      ? "Put the earlier day in Start."
-      : ranged.length ? "" : "No days in that range.";
+  const rangeNote = !dates.length
+    ? "Nothing logged yet."
+    : !logFrom || !logTo
+      ? "Choose a start and an end."
+      : logFrom > logTo
+        ? "Put the earlier day in Start."
+        : ranged.length ? "" : "No days in that range.";
   return `
     <div class="top">
       <div>
@@ -296,7 +305,6 @@ function logView() {
       </div>
       <select class="who" id="person">${PEOPLE.map((p) => `<option value="${p.id}" ${p.id === person ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
     </div>
-    ${rows ? `<div class="card">${rows}</div>` : `<p class="hint">Nothing logged yet.</p>`}
     <button class="textbtn centerlink" type="button" id="download">Download ${esc(personName())}'s log</button>
     <h2>Between dates</h2>
     <div class="pair">
@@ -380,6 +388,24 @@ function categoryChoices(selected, isNew) {
     </div>`;
 }
 
+function blankMicros() {
+  const micros = {};
+  for (const [key] of [...VITAMINS, ...MINERALS]) micros[key] = "";
+  return micros;
+}
+
+function microsFromFood(food) {
+  const micros = blankMicros();
+  let any = false;
+  for (const [key] of [...VITAMINS, ...MINERALS]) {
+    const value = microValue(food?.micros, key);
+    if (value == null || value === "") continue;
+    micros[key] = value;
+    any = true;
+  }
+  return { micros, showMicros: any };
+}
+
 function formFromFood(food) {
   const unit = food.unit === "ml" ? "ml" : food.unit === "count" ? "count" : "g";
   const known = categories().includes(food.category);
@@ -399,6 +425,7 @@ function formFromFood(food) {
     source: food.source,
     serving: unit === "count" ? (food.servingCount || 1) : (food.servingGrams ?? ""),
     servingUnit: unit,
+    ...microsFromFood(food),
   };
 }
 
@@ -419,6 +446,7 @@ function formFromSearch(food) {
     source: food.source,
     serving: "100",
     servingUnit: "g",
+    ...microsFromFood(food),
   };
 }
 
@@ -442,6 +470,18 @@ function searchView() {
     ${form}
     <h2>Or type a label</h2>
     <button class="btn" type="button" id="blank-food" style="background:#2a312b;color:var(--text)">Enter numbers myself</button>`;
+}
+
+function microEditor(form) {
+  const input = (key, label, unit) => `
+    <div class="field"><label class="label">${esc(label)} (${esc(unit)})</label>
+      <input class="mini" id="nf-micro-${key}" inputmode="decimal" value="${esc(form.micros?.[key] ?? "")}" placeholder="blank if unknown">
+    </div>`;
+  return `
+    <h2>Vitamins & Minerals</h2>
+    <p class="hint">For this serving. Leave a box blank when the label does not list it.</p>
+    <div class="pair">${VITAMINS.map(([key, label, unit]) => input(key, label, unit)).join("")}</div>
+    <div class="pair">${MINERALS.map(([key, label, unit]) => input(key, label, unit)).join("")}</div>`;
 }
 
 function confirmForm(heading = "Confirm this serving", buttonId = "save-food", buttonLabel = "Save to the list") {
@@ -473,6 +513,7 @@ function confirmForm(heading = "Confirm this serving", buttonId = "save-food", b
         <div class="field"><label class="label">Fiber</label><input class="mini" id="nf-fiber" inputmode="decimal" value="${esc(f.fiber)}"></div>
       </div>
       <p class="hint">${esc(f.source || "")} Other carbs and unsaturated fat are what's left after sugar, fiber, and saturated fat.</p>
+      ${f.showMicros ? microEditor(f) : `<button class="textbtn" type="button" id="show-micros">Vitamins & Minerals</button>`}
       <button class="btn" type="button" id="${buttonId}">${esc(buttonLabel)}</button>
     </div>`;
 }
@@ -535,6 +576,7 @@ function goalsView() {
       <button class="textbtn centerlink" type="button" id="export">Download backup</button>
       <div class="field"><label class="label">Import backup</label><input class="textin" id="import" type="file" accept="application/json"></div>
       <p class="hint">${mode === "shared" ? "Connected." : "Not connected."}</p>
+      <p class="hint">Home screen icon by Freepik from Flaticon.</p>
       ${syncError ? `<p class="warn">${esc(syncError)}</p>` : ""}
     </div>`;
 }
@@ -565,6 +607,14 @@ function captureFoodForm() {
     serving: document.getElementById("nf-serving")?.value ?? "",
     servingUnit: document.getElementById("nf-unit")?.value || "g",
   };
+  if (document.getElementById("nf-micro-vit_a")) {
+    const micros = blankMicros();
+    for (const [key] of [...VITAMINS, ...MINERALS]) {
+      micros[key] = document.getElementById(`nf-micro-${key}`)?.value ?? "";
+    }
+    lookup.form.micros = micros;
+    lookup.form.showMicros = true;
+  }
 }
 
 function render() {
@@ -616,7 +666,20 @@ function readForm() {
     serving: f.serving,
     servingUnit: f.servingUnit || "g",
     source: f.source || "Typed from a label",
+    micros: f.micros || blankMicros(),
   };
+}
+
+function storedMicros(form) {
+  const micros = {};
+  for (const [key] of [...VITAMINS, ...MINERALS]) {
+    const raw = form.micros?.[key];
+    if (raw === "" || raw == null) continue;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) continue;
+    micros[key] = round1(n);
+  }
+  return micros;
 }
 
 function servingFields(form, existing) {
@@ -655,7 +718,7 @@ function foodFromForm(id) {
     name: form.name || existing?.name || "New food",
     ...servingFields(form, existing),
     ...parts,
-    micros: existing?.micros || {},
+    micros: storedMicros(form),
     source: form.source || existing?.source || "Typed from a label",
     approx: existing ? existing.approx : true,
     listId: existing?.listId || listForPerson(person),
@@ -941,8 +1004,16 @@ function onClick(e) {
       name: lookup.q, category: "", newCategory: false, newCategoryName: "",
       kcal: "", protein: "", fat: "", sat: "", carb: "", sugar: "", fiber: "",
       source: "Typed from a label", serving: "100", servingUnit: "g",
+      micros: blankMicros(), showMicros: false,
     };
     scrollTarget = "food-editor";
+    render();
+    return;
+  }
+  if (e.target.id === "show-micros") {
+    captureFoodForm();
+    if (lookup.form) lookup.form.showMicros = true;
+    skipCapture = true;
     render();
     return;
   }

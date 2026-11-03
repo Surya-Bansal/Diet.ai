@@ -18,6 +18,9 @@ export const MEALS = ["Breakfast", "Lunch", "Snack", "Dinner", "Protocol"];
 export const VITAMINS = [
   ["vit_a", "A", "mcg"],
   ["vit_b1", "B1", "mg"],
+  ["vit_b2", "B2", "mg"],
+  ["vit_b3", "B3", "mg"],
+  ["vit_b4", "B4", "mg"],
   ["vit_b5", "B5", "mg"],
   ["vit_b6", "B6", "mg"],
   ["vit_b7", "B7", "mcg"],
@@ -30,30 +33,51 @@ export const VITAMINS = [
 ];
 
 export const MINERALS = [
+  ["min_na", "Sodium", "mg"],
+  ["min_k", "Potassium", "mg"],
   ["min_ca", "Calcium", "mg"],
   ["min_fe", "Iron", "mg"],
   ["min_zn", "Zinc", "mg"],
-  ["min_mg", "Magnesium", "mg"],
-  ["min_k", "Potassium", "mg"],
   ["min_i", "Iodine", "mcg"],
+  ["min_mg", "Magnesium", "mg"],
+  ["min_mn", "Manganese", "mg"],
+  ["min_cr", "Chromium", "mcg"],
+  ["min_cu", "Copper", "mg"],
+  ["min_mo", "Molybdenum", "mcg"],
+  ["min_p", "Phosphorus", "mg"],
+  ["min_se", "Selenium", "mcg"],
 ];
 
 const VITAMIN_MIN = {
-  vit_a: 50, vit_b1: 0.1, vit_b5: 0.5, vit_b6: 0.1, vit_b7: 3,
-  vit_b9: 20, vit_b12: 0.5, vit_c: 10, vit_d: 1, vit_e: 1, vit_k: 5,
+  vit_a: 50, vit_b1: 0.1, vit_b2: 0.05, vit_b3: 1, vit_b4: 1,
+  vit_b5: 0.5, vit_b6: 0.1, vit_b7: 3, vit_b9: 20, vit_b12: 0.5,
+  vit_c: 10, vit_d: 1, vit_e: 1, vit_k: 5,
 };
 
 const MINERAL_MIN = {
-  min_ca: 50, min_fe: 1, min_zn: 1, min_mg: 20, min_k: 150, min_i: 15,
+  min_na: 50, min_k: 150, min_ca: 50, min_fe: 1, min_zn: 1, min_i: 15,
+  min_mg: 20, min_mn: 0.1, min_cr: 1, min_cu: 0.1, min_mo: 5, min_p: 50, min_se: 5,
 };
 
 const MICRO_ALIAS = {
-  Vit_A_mcg: "vit_a", Vit_B1_mg: "vit_b1", Vit_B5_mg: "vit_b5", Vit_B6_mg: "vit_b6",
-  Vit_B7_mcg: "vit_b7", Vit_B9_mcg: "vit_b9", Vit_B12_mcg: "vit_b12", Vit_C_mg: "vit_c",
-  Vit_D_mcg: "vit_d", Vit_E_mg: "vit_e", Vit_K_mcg: "vit_k",
-  Min_Ca_mg: "min_ca", Min_Fe_mg: "min_fe", Min_Zn_mg: "min_zn",
-  Min_Mg_mg: "min_mg", Min_K_mg: "min_k", Min_I_mcg: "min_i",
+  Vit_A_mcg: "vit_a", Vit_B1_mg: "vit_b1", Vit_B2_mg: "vit_b2", Vit_B3_mg: "vit_b3",
+  Vit_B4: "vit_b4", Vit_B5_mg: "vit_b5", Vit_B6_mg: "vit_b6", Vit_B7_mcg: "vit_b7",
+  Vit_B9_mcg: "vit_b9", Vit_B12_mcg: "vit_b12", Vit_C_mg: "vit_c", Vit_D_mcg: "vit_d",
+  Vit_E_mg: "vit_e", Vit_K_mcg: "vit_k",
+  Min_Na_mg: "min_na", Min_K_mg: "min_k", Min_Ca_mg: "min_ca", Min_Fe_mg: "min_fe",
+  Min_Zn_mg: "min_zn", Min_I_mcg: "min_i", Min_Mg_mg: "min_mg", Min_Mn_mg: "min_mn",
+  Min_Cr_mcg: "min_cr", Min_Cu_mg: "min_cu", Min_Mo_mcg: "min_mo", Min_P_mg: "min_p",
+  Min_Se_mcg: "min_se",
 };
+
+export function microValue(micros, key) {
+  if (!micros) return null;
+  if (micros[key] != null && micros[key] !== "") return micros[key];
+  for (const [alias, canon] of Object.entries(MICRO_ALIAS)) {
+    if (canon === key && micros[alias] != null && micros[alias] !== "") return micros[alias];
+  }
+  return null;
+}
 
 function canonMicro(key) {
   return MICRO_ALIAS[key] || key;
@@ -247,6 +271,8 @@ export function selfTest(foods) {
   const greens = scaleFood(foods.find((f) => f.name.includes("Greens")), 1, "count");
   const gday = sumEntries([greens]);
   const mins = defaultGoals().surya;
+  check("sheet vitamin columns", VITAMINS.length === 14, VITAMINS.length);
+  check("sheet mineral columns", MINERALS.length === 13, MINERALS.length);
   check("greens vitamins", hitCount(gday, VITAMINS.map(([k]) => k), mins.vitamins) === 8, hitCount(gday, VITAMINS.map(([k]) => k), mins.vitamins));
   check("greens minerals", hitCount(gday, MINERALS.map(([k]) => k), mins.minerals) === 2, hitCount(gday, MINERALS.map(([k]) => k), mins.minerals));
   const pill = scaleFood(foods.find((f) => f.name.includes("B12")), 1, "count");
