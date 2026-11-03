@@ -81,6 +81,7 @@ tr:last-child td { border-bottom: 0; }
 .entry button, .linkbtn, .textbtn {
   background: none; border: 0; color: var(--sage); font-weight: 650; padding: 0;
 }
+.entry-actions { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
 .x { color: var(--dim) !important; font-size: 18px; line-height: 1; padding: 4px 2px !important; }
 .dayrow { width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid #262b26; color: var(--text); padding: 8px 0; }
 .dayrow span { color: var(--dim); font-size: 12px; }
@@ -88,7 +89,7 @@ tr:last-child td { border-bottom: 0; }
   position: fixed; left: 50%; right: auto; bottom: 0; transform: translateX(-50%);
   width: min(480px, 100%); height: 64px;
   background: var(--nav); border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(4, 1fr); padding-bottom: 6px;
+  display: grid; grid-template-columns: repeat(5, 1fr); padding-bottom: 6px;
 }
 .nav button {
   background: none; border: 0; color: var(--dim);
@@ -96,6 +97,7 @@ tr:last-child td { border-bottom: 0; }
   min-width: 0; white-space: nowrap;
   font-size: 11px; font-weight: 700;
 }
+.nav-emoji { font-size: 16px; line-height: 18px; }
 .nav button.on { color: var(--copper); }
 .segs { display: flex; flex-wrap: wrap; gap: 6px; }
 .seg {
@@ -132,6 +134,7 @@ tr:last-child td { border-bottom: 0; }
 h2 { margin: 18px 0 0; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
 details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
 .back { background: none; border: 0; color: var(--sage); font-weight: 700; padding: 0 0 8px; }
+#food-editor { scroll-margin-top: 12px; }
 @media (min-width: 900px) {
   body { background: #d9d4cb; }
   #app {

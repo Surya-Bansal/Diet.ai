@@ -103,7 +103,7 @@ export function fromLabelTotals(src) {
 
 export function scaleFood(food, amount, unit) {
   const use = unit || food.unit;
-  const basis = use === "count" ? 1 : Number(food.servingGrams);
+  const basis = use === "count" ? (Number(food.servingCount) > 0 ? Number(food.servingCount) : 1) : Number(food.servingGrams);
   const factor = basis ? Number(amount) / basis : 0;
   const n = (v) => round1((Number(v) || 0) * factor);
   const micros = {};
@@ -177,12 +177,11 @@ export function hitCount(totals, keys, minimums) {
 
 export function foodsText(entries) {
   return entries.map((e) => {
-    if (e.unit === "count") {
-      const n = Number(e.amount);
-      const shown = Number.isInteger(n) ? String(n) : String(round1(n));
-      return `${shown}x ${e.name}`;
-    }
-    return `${round1(e.amount)}g ${e.name}`;
+    const n = Number(e.amount);
+    const shown = Number.isInteger(n) ? String(n) : String(round1(n));
+    if (e.unit === "count") return `${shown}x ${e.name}`;
+    if (e.unit === "ml") return `${shown}ml ${e.name}`;
+    return `${shown}g ${e.name}`;
   }).join("; ");
 }
 
@@ -254,5 +253,9 @@ export function selfTest(foods) {
   check("b12 pill counts", hitCount(sumEntries([pill]), ["vit_b12"], mins.vitamins) === 1, pill.micros.vit_b12);
   check("nonu has her own list", listForPerson("nonu") === "nonu" && listForPerson("surya") === "home" && listForPerson("sahi") === "home");
   check("sheet foods stay with Surya and Sahi", normalizeFood(foods[0]).listId === "home");
+  const two = scaleFood({ kcal: 100, protein: 0, fatUnsat: 0, fatSat: 0, fatSplit: true, carbOther: 0, sugar: 0, fiber: 0, unit: "count", servingCount: 2, micros: {} }, 1, "count");
+  check("count serving of 2", Math.abs(two.kcal - 50) < 0.05, two.kcal);
+  const ml = scaleFood({ kcal: 40, protein: 0, fatUnsat: 0, fatSat: 0, fatSplit: true, carbOther: 0, sugar: 0, fiber: 0, unit: "ml", servingGrams: 200, micros: {} }, 100, "ml");
+  check("ml scales like a serving", Math.abs(ml.kcal - 20) < 0.05, ml.kcal);
   return lines;
 }
