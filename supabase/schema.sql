@@ -32,7 +32,19 @@ alter table entries enable row level security;
 alter table days enable row level security;
 alter table goals enable row level security;
 
+drop policy if exists "household foods" on foods;
+drop policy if exists "household entries" on entries;
+drop policy if exists "household days" on days;
+drop policy if exists "household goals" on goals;
 create policy "household foods" on foods for all using (true) with check (true);
 create policy "household entries" on entries for all using (true) with check (true);
 create policy "household days" on days for all using (true) with check (true);
 create policy "household goals" on goals for all using (true) with check (true);
+
+-- New Supabase projects do not let the app see tables until these grants exist.
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on public.foods to anon, authenticated, service_role;
+grant select, insert, update, delete on public.entries to anon, authenticated, service_role;
+grant select, insert, update, delete on public.days to anon, authenticated, service_role;
+grant select, insert, update, delete on public.goals to anon, authenticated, service_role;
+notify pgrst, 'reload schema';

@@ -11,9 +11,18 @@ export function loadConfig() {
   }
 }
 
+export function cleanSupabaseUrl(raw) {
+  let url = String(raw || "").trim().replace(/\/+$/, "");
+  const dash = url.match(/dashboard\/project\/([a-z0-9]+)/i);
+  if (dash) url = `https://${dash[1]}.supabase.co`;
+  url = url.replace(/\/rest\/v1$/, "");
+  if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url;
+}
+
 export function saveConfig(config) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify({
-    supabaseUrl: (config.supabaseUrl || "").trim(),
+    supabaseUrl: cleanSupabaseUrl(config.supabaseUrl),
     supabaseKey: (config.supabaseKey || "").trim(),
     usdaKey: (config.usdaKey || "").trim(),
   }));
@@ -69,22 +78,40 @@ async function remote() {
   return client;
 }
 
+function explainRemoteError(error) {
+  const message = error?.message || String(error || "Could not reach the database.");
+  if (/permission denied|schema cache|PGRST205|42501/i.test(message)) {
+    return `${message} In the Supabase SQL editor, run the grant lines at the bottom of supabase/schema.sql, then tap Connect again.`;
+  }
+  return message;
+}
+
 export async function pullRemote(seedFoods) {
-  const sb = await remote();
-  if (!sb) return { mode: "local", state: null, error: "" };
-  const [foods, entries, days, goals] = await Promise.all([
-    sb.from("foods").select("id,data"),
-    sb.from("entries").select("id,data"),
-    sb.from("days").select("person,date,exercise,burned"),
-    sb.from("goals").select("person,data"),
-  ]);
+  let sb;
+  try {
+    sb = await remote();
+  } catch (err) {
+    return { mode: "local", state: null, error: explainRemoteError(err) };
+  }
+  if (!sb) return { mode: "local", state: null, error: "Paste the project URL and the anon key, then tap Connect." };
+  let foods, entries, days, goals;
+  try {
+    [foods, entries, days, goals] = await Promise.all([
+      sb.from("foods").select("id,data"),
+      sb.from("entries").select("id,data"),
+      sb.from("days").select("person,date,exercise,burned"),
+      sb.from("goals").select("person,data"),
+    ]);
+  } catch (err) {
+    return { mode: "local", state: null, error: explainRemoteError(err) };
+  }
   const error = foods.error || entries.error || days.error || goals.error;
-  if (error) return { mode: "local", state: null, error: error.message };
+  if (error) return { mode: "local", state: null, error: explainRemoteError(error) };
   let foodRows = prepareFoods((foods.data || []).map((r) => r.data));
   if (!foodRows.length) {
     foodRows = prepareFoods(seedFoods);
-    const { error: seedError } = await sb.from("foods").upsert(seedFoods.map((f) => ({ id: f.id, data: f })));
-    if (seedError) return { mode: "local", state: null, error: seedError.message };
+    const { error: seedError } = await sb.from("foods").upsert(foodRows.map((f) => ({ id: f.id, data: f })));
+    if (seedError) return { mode: "local", state: null, error: explainRemoteError(seedError) };
   }
   const goalMap = defaultGoals();
   for (const row of goals.data || []) goalMap[row.person] = { ...goalMap[row.person], ...row.data };

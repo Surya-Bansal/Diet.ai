@@ -359,6 +359,7 @@ function goalsView() {
       <button class="textbtn centerlink" type="button" id="export">Download backup</button>
       <div class="field"><label class="label">Import backup</label><input class="textin" id="import" type="file" accept="application/json"></div>
       <p class="hint">${mode === "shared" ? "Connected." : "Not connected."}</p>
+      ${syncError ? `<p class="warn">${esc(syncError)}</p>` : ""}
     </div>`;
 }
 
@@ -752,14 +753,20 @@ async function boot() {
     render();
     return;
   }
-  const remote = await pullRemote(foodsSeed);
-  if (remote.state) {
-    state = remote.state;
-    mode = "shared";
-    saveLocal(state);
-  } else {
+  try {
+    const remote = await pullRemote(foodsSeed);
+    if (remote.state) {
+      state = remote.state;
+      mode = "shared";
+      syncError = "";
+      saveLocal(state);
+    } else {
+      mode = "local";
+      syncError = remote.error || "";
+    }
+  } catch (err) {
     mode = "local";
-    syncError = remote.error || "";
+    syncError = err.message || String(err);
   }
   ready = true;
   render();
