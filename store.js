@@ -12,18 +12,27 @@ export function loadConfig() {
 }
 
 export function cleanSupabaseUrl(raw) {
-  let url = String(raw || "").trim().replace(/\/+$/, "");
+  let url = String(raw || "").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().replace(/\/+$/, "");
   const dash = url.match(/dashboard\/project\/([a-z0-9]+)/i);
   if (dash) url = `https://${dash[1]}.supabase.co`;
   url = url.replace(/\/rest\/v1$/, "");
   if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  url = url.replace(/^http:\/\//i, "https://");
   return url;
+}
+
+export function cleanSupabaseKey(raw) {
+  return String(raw || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^bearer\s+/i, "")
+    .replace(/\s+/g, "");
 }
 
 export function saveConfig(config) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify({
     supabaseUrl: cleanSupabaseUrl(config.supabaseUrl),
-    supabaseKey: (config.supabaseKey || "").trim(),
+    supabaseKey: cleanSupabaseKey(config.supabaseKey),
     usdaKey: (config.usdaKey || "").trim(),
   }));
 }
@@ -66,52 +75,71 @@ export function saveLocal(state) {
   }));
 }
 
-let client = null;
-
-async function remote() {
-  const config = loadConfig();
-  if (!config.supabaseUrl || !config.supabaseKey) return null;
-  if (!client) {
-    const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2.49.1");
-    client = createClient(config.supabaseUrl, config.supabaseKey);
-  }
-  return client;
-}
-
 function explainRemoteError(error) {
   const message = error?.message || String(error || "Could not reach the database.");
   if (/permission denied|schema cache|PGRST205|42501/i.test(message)) {
     return `${message} In the Supabase SQL editor, run the grant lines at the bottom of supabase/schema.sql, then tap Connect again.`;
   }
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    const url = loadConfig().supabaseUrl || "the URL you pasted";
+    return `The browser could not reach ${url}. It must look like https://abcdefghijklmnopqrst.supabase.co. Open the project in Supabase and wait until it says the project is running, then tap Connect again.`;
+  }
   return message;
 }
 
+async function rest(path, { method = "GET", body, prefer } = {}) {
+  const config = loadConfig();
+  const url = config.supabaseUrl;
+  const key = config.supabaseKey;
+  if (!url || !key) {
+    return { error: { message: "Paste the project URL and the anon key, then tap Connect." } };
+  }
+  if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/i.test(url)) {
+    return { error: { message: `The Supabase URL is "${url}". It needs to look like https://abcdefghijklmnopqrst.supabase.co with nothing after it.` } };
+  }
+  let response;
+  try {
+    response = await fetch(`${url}/rest/v1/${path}`, {
+      method,
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(prefer ? { Prefer: prefer } : {}),
+      },
+      body: body == null ? undefined : JSON.stringify(body),
+    });
+  } catch (err) {
+    return { error: { message: err.message || "Failed to fetch" } };
+  }
+  if (!response.ok) {
+    let payload = {};
+    try { payload = await response.json(); } catch { /* not json */ }
+    return { error: { message: payload.message || `Supabase returned ${response.status}` } };
+  }
+  const text = await response.text();
+  return { data: text ? JSON.parse(text) : [] };
+}
+
+async function upsert(table, rows) {
+  return rest(table, { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
+}
+
 export async function pullRemote(seedFoods) {
-  let sb;
-  try {
-    sb = await remote();
-  } catch (err) {
-    return { mode: "local", state: null, error: explainRemoteError(err) };
-  }
-  if (!sb) return { mode: "local", state: null, error: "Paste the project URL and the anon key, then tap Connect." };
-  let foods, entries, days, goals;
-  try {
-    [foods, entries, days, goals] = await Promise.all([
-      sb.from("foods").select("id,data"),
-      sb.from("entries").select("id,data"),
-      sb.from("days").select("person,date,exercise,burned"),
-      sb.from("goals").select("person,data"),
-    ]);
-  } catch (err) {
-    return { mode: "local", state: null, error: explainRemoteError(err) };
-  }
+  const [foods, entries, days, goals] = await Promise.all([
+    rest("foods?select=id,data"),
+    rest("entries?select=id,data"),
+    rest("days?select=person,date,exercise,burned"),
+    rest("goals?select=person,data"),
+  ]);
   const error = foods.error || entries.error || days.error || goals.error;
   if (error) return { mode: "local", state: null, error: explainRemoteError(error) };
   let foodRows = prepareFoods((foods.data || []).map((r) => r.data));
   if (!foodRows.length) {
     foodRows = prepareFoods(seedFoods);
-    const { error: seedError } = await sb.from("foods").upsert(foodRows.map((f) => ({ id: f.id, data: f })));
-    if (seedError) return { mode: "local", state: null, error: explainRemoteError(seedError) };
+    const seeded = await upsert("foods", foodRows.map((f) => ({ id: f.id, data: f })));
+    if (seeded.error) return { mode: "local", state: null, error: explainRemoteError(seeded.error) };
   }
   const goalMap = defaultGoals();
   for (const row of goals.data || []) goalMap[row.person] = { ...goalMap[row.person], ...row.data };
@@ -133,45 +161,33 @@ export async function pullRemote(seedFoods) {
 }
 
 export async function pushFood(food) {
-  const sb = await remote();
-  if (!sb) return;
-  const { error } = await sb.from("foods").upsert({ id: food.id, data: food });
-  if (error) throw new Error(error.message);
+  const { error } = await upsert("foods", [{ id: food.id, data: food }]);
+  if (error) throw new Error(explainRemoteError(error));
 }
 
 export async function pushEntry(entry) {
-  const sb = await remote();
-  if (!sb) return;
-  const { error } = await sb.from("entries").upsert({ id: entry.id, data: entry });
-  if (error) throw new Error(error.message);
+  const { error } = await upsert("entries", [{ id: entry.id, data: entry }]);
+  if (error) throw new Error(explainRemoteError(error));
 }
 
 export async function removeEntryRemote(id) {
-  const sb = await remote();
-  if (!sb) return;
-  const { error } = await sb.from("entries").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  const { error } = await rest(`entries?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" });
+  if (error) throw new Error(explainRemoteError(error));
 }
 
 export async function pushDay(day) {
-  const sb = await remote();
-  if (!sb) return;
-  const { error } = await sb.from("days").upsert({
+  const { error } = await upsert("days", [{
     person: day.person,
     date: day.date,
     exercise: day.exercise || "",
     burned: Number(day.burned) || 0,
-  });
-  if (error) throw new Error(error.message);
+  }]);
+  if (error) throw new Error(explainRemoteError(error));
 }
 
 export async function pushGoals(person, goals) {
-  const sb = await remote();
-  if (!sb) return;
-  const { error } = await sb.from("goals").upsert({ person, data: goals });
-  if (error) throw new Error(error.message);
+  const { error } = await upsert("goals", [{ person, data: goals }]);
+  if (error) throw new Error(explainRemoteError(error));
 }
 
-export function resetClient() {
-  client = null;
-}
+export function resetClient() {}
