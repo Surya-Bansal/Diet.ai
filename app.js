@@ -734,7 +734,24 @@ function onInput(e) {
   }
 }
 
+async function applyBundledConfig() {
+  try {
+    const bundled = await import("./config.local.js");
+    if (bundled.supabaseUrl && bundled.supabaseKey) {
+      const existing = loadConfig();
+      saveConfig({
+        supabaseUrl: bundled.supabaseUrl,
+        supabaseKey: bundled.supabaseKey,
+        usdaKey: existing.usdaKey || "",
+      });
+    }
+  } catch {
+    // The hosted site has no config.local.js. Goals still accepts a pasted key.
+  }
+}
+
 async function boot() {
+  await applyBundledConfig();
   state = loadLocal(foodsSeed);
   if (preview) {
     state.entries = [];
