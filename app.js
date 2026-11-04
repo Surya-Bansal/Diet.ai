@@ -71,12 +71,21 @@ function dayEntries() {
 
 const EXERCISE_SETS = ["Push", "Pull, Legs & Abs", "Hiking"];
 const KCAL_PER_STEP = 0.024;
+// Net kcal per minute above rest at 63.5 kg. Strength is 5.0 MET, hiking is 6.0 MET.
+const KCAL_PER_MIN = 4.4;
+const HIKE_KCAL_PER_MIN = 5.6;
 let addingExercise = false;
 
-function stepCalories(steps) {
-  const count = Number(steps) || 0;
-  if (!count) return 0;
-  return round1(count * KCAL_PER_STEP);
+function kcalPerMinute(exercise) {
+  const name = String(exercise || "").trim().toLowerCase();
+  if (name.includes("hik")) return HIKE_KCAL_PER_MIN;
+  return KCAL_PER_MIN;
+}
+
+function activityCalories(steps, minutes, exercise) {
+  const raw = (Number(steps) || 0) * KCAL_PER_STEP + (Number(minutes) || 0) * kcalPerMinute(exercise);
+  if (!raw) return 0;
+  return round1(raw);
 }
 
 function dayMeta() {
@@ -393,7 +402,7 @@ function exerciseBlock(meta) {
     </div>
     <div class="field"><label class="label" for="steps">Steps</label><input class="textin" id="steps" inputmode="numeric" value="${meta.steps || ""}" placeholder="0"></div>
     <div class="field"><label class="label" for="burned">Calories</label><input class="textin" id="burned" inputmode="decimal" value="${meta.burned || ""}" placeholder="0">
-      <p class="hint">Filled from steps at 24 kcal per 1,000. Edit it if that guess is off.</p>
+      <p class="hint">Steps add 24 kcal per 1,000. Exercise adds about 4.4 kcal per minute, or 5.6 for hiking. Edit it if that guess is off.</p>
     </div>`;
 }
 
@@ -867,17 +876,26 @@ function readExerciseName() {
   return picked;
 }
 
+function matchesCalorieGuess(burnedText, guess) {
+  if (burnedText === "") return true;
+  const typed = Number(burnedText);
+  if (!Number.isFinite(typed)) return false;
+  return Math.abs(typed - guess) < 0.05;
+}
+
 function saveDayFromInputs(source) {
-  const existing = state.days.find((d) => d.person === person && d.date === date) || { steps: 0, burned: 0 };
+  const existing = state.days.find((d) => d.person === person && d.date === date) || { steps: 0, burned: 0, minutes: 0, exercise: "" };
   const steps = Number(document.getElementById("steps")?.value) || 0;
   const minutes = Number(document.getElementById("minutes")?.value) || 0;
+  const exercise = readExerciseName();
   let burnedText = document.getElementById("burned")?.value ?? "";
-  if (source === "steps") {
-    const previous = stepCalories(existing.steps || 0);
-    const typed = burnedText === "" ? 0 : Number(burnedText);
-    const following = burnedText === "" || Math.abs((Number.isFinite(typed) ? typed : 0) - previous) < 0.05;
+  if (source === "activity") {
+    const previous = activityCalories(existing.steps, existing.minutes, existing.exercise);
+    const stepsOnly = activityCalories(existing.steps, 0, "");
+    const following = matchesCalorieGuess(burnedText, previous)
+      || ((Number(existing.minutes) || 0) > 0 && matchesCalorieGuess(burnedText, stepsOnly));
     if (following) {
-      const next = stepCalories(steps);
+      const next = activityCalories(steps, minutes, exercise);
       burnedText = next ? String(next) : "";
       const box = document.getElementById("burned");
       if (box) box.value = burnedText;
@@ -886,7 +904,7 @@ function saveDayFromInputs(source) {
   const day = {
     person,
     date,
-    exercise: readExerciseName(),
+    exercise,
     minutes,
     steps,
     burned: Number(burnedText) || 0,
@@ -896,6 +914,25 @@ function saveDayFromInputs(source) {
   else state.days.push(day);
   persist();
   cloud(() => pushDay(day));
+}
+
+async function repairStepOnlyBurn() {
+  const changed = [];
+  state.days = state.days.map((day) => {
+    const minutes = Number(day.minutes) || 0;
+    if (!minutes) return day;
+    const stepsOnly = activityCalories(day.steps, 0, "");
+    const burned = Number(day.burned) || 0;
+    if (Math.abs(burned - stepsOnly) >= 0.05) return day;
+    const next = activityCalories(day.steps, minutes, day.exercise);
+    if (Math.abs(next - burned) < 0.05) return day;
+    const updated = { ...day, burned: next };
+    changed.push(updated);
+    return updated;
+  });
+  if (!changed.length) return;
+  persist();
+  for (const day of changed) await cloud(() => pushDay(day));
 }
 
 function saveGoalField(key, value) {
@@ -1139,7 +1176,7 @@ function onChange(e) {
   if (e.target.id === "date") { date = e.target.value || todayISO(); addingExercise = false; render(); return; }
   if (e.target.id === "exercise") {
     addingExercise = e.target.value === "__new__";
-    if (!addingExercise) saveDayFromInputs();
+    if (!addingExercise) saveDayFromInputs("activity");
     render();
     return;
   }
@@ -1195,8 +1232,8 @@ function onInput(e) {
     if (box) box.innerHTML = portionHTML(portionForDraft());
     return;
   }
-  if (e.target.id === "exercise-new" || e.target.id === "minutes" || e.target.id === "burned") { saveDayFromInputs(); return; }
-  if (e.target.id === "steps") { saveDayFromInputs("steps"); return; }
+  if (e.target.id === "exercise-new" || e.target.id === "minutes" || e.target.id === "steps") { saveDayFromInputs("activity"); return; }
+  if (e.target.id === "burned") { saveDayFromInputs(); return; }
   if (e.target.id === "food-filter") {
     draft.foodFilter = e.target.value;
     render();
@@ -1235,6 +1272,7 @@ async function boot() {
   }
   if (!PEOPLE.some((p) => p.id === person)) person = "surya";
   await repairEntryUnits();
+  await repairStepOnlyBurn();
   render();
   if (params.has("e2e")) {
     ready = true;
@@ -1265,6 +1303,7 @@ async function boot() {
       syncError = "";
       saveLocal(state);
       await repairEntryUnits();
+      await repairStepOnlyBurn();
     } else {
       mode = "local";
       syncError = remote.error || "";
