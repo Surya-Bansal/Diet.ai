@@ -19,6 +19,8 @@ create table if not exists days (
   date text not null,
   exercise text default '',
   burned numeric default 0,
+  steps numeric default 0,
+  minutes numeric default 0,
   primary key (person, date)
 );
 
@@ -47,4 +49,7 @@ grant select, insert, update, delete on public.foods to anon, authenticated, ser
 grant select, insert, update, delete on public.entries to anon, authenticated, service_role;
 grant select, insert, update, delete on public.days to anon, authenticated, service_role;
 grant select, insert, update, delete on public.goals to anon, authenticated, service_role;
+alter table days add column if not exists steps numeric default 0;
+alter table days add column if not exists minutes numeric default 0;
+
 notify pgrst, 'reload schema';

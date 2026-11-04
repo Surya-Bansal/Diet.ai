@@ -130,10 +130,14 @@ export async function pullRemote(seedFoods) {
   const [foods, entries, days, goals] = await Promise.all([
     rest("foods?select=id,data"),
     rest("entries?select=id,data"),
-    rest("days?select=person,date,exercise,burned"),
+    rest("days?select=person,date,exercise,burned,steps,minutes"),
     rest("goals?select=person,data"),
   ]);
-  const error = foods.error || entries.error || days.error || goals.error;
+  let dayRows = days;
+  if (dayRows.error && /steps|minutes|column|schema cache/i.test(dayRows.error.message || "")) {
+    dayRows = await rest("days?select=person,date,exercise,burned");
+  }
+  const error = foods.error || entries.error || dayRows.error || goals.error;
   if (error) return { mode: "local", state: null, error: explainRemoteError(error) };
   let foodRows = prepareFoods((foods.data || []).map((r) => r.data));
   if (!foodRows.length) {
@@ -149,11 +153,13 @@ export async function pullRemote(seedFoods) {
     state: {
       foods: foodRows,
       entries: (entries.data || []).map((r) => r.data),
-      days: (days.data || []).map((r) => ({
+      days: (dayRows.data || []).map((r) => ({
         person: r.person,
         date: r.date,
         exercise: r.exercise || "",
         burned: Number(r.burned) || 0,
+        steps: r.steps == null ? undefined : Number(r.steps) || 0,
+        minutes: r.minutes == null ? undefined : Number(r.minutes) || 0,
       })),
       goals: goalMap,
     },
@@ -176,12 +182,24 @@ export async function removeEntryRemote(id) {
 }
 
 export async function pushDay(day) {
-  const { error } = await upsert("days", [{
+  const row = {
     person: day.person,
     date: day.date,
     exercise: day.exercise || "",
     burned: Number(day.burned) || 0,
-  }]);
+    steps: Number(day.steps) || 0,
+    minutes: Number(day.minutes) || 0,
+  };
+  let { error } = await upsert("days", [row]);
+  if (error && /steps|minutes|column|schema cache/i.test(error.message || "")) {
+    const retry = await upsert("days", [{
+      person: row.person,
+      date: row.date,
+      exercise: row.exercise,
+      burned: row.burned,
+    }]);
+    error = retry.error;
+  }
   if (error) throw new Error(explainRemoteError(error));
 }
 

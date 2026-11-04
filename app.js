@@ -69,8 +69,27 @@ function dayEntries() {
   return state.entries.filter((e) => e.person === person && e.date === date);
 }
 
+const EXERCISE_SETS = ["Push", "Pull, Legs & Abs", "Hiking"];
+const KCAL_PER_STEP = 0.024;
+let addingExercise = false;
+
+function stepCalories(steps) {
+  const count = Number(steps) || 0;
+  if (!count) return 0;
+  return round1(count * KCAL_PER_STEP);
+}
+
 function dayMeta() {
-  return state.days.find((d) => d.person === person && d.date === date) || { exercise: "", burned: 0 };
+  return state.days.find((d) => d.person === person && d.date === date) || { exercise: "", burned: 0, steps: 0, minutes: 0 };
+}
+
+function exerciseNames() {
+  const names = [...EXERCISE_SETS];
+  for (const day of state.days) {
+    if (day.person !== person || !day.exercise || names.includes(day.exercise)) continue;
+    names.push(day.exercise);
+  }
+  return names;
 }
 
 function persist() {
@@ -180,16 +199,13 @@ function todayView() {
     <div class="top">
       <div>
         <h1>Record</h1>
-        <p class="sub">${esc(formatDate(date))}${meta.exercise ? ` · ${esc(meta.exercise)}` : ""} · ${kcal(meta.burned)} kcal burned</p>
+        <p class="sub">${esc(formatDate(date))}${meta.exercise ? ` · ${esc(meta.exercise)}` : ""}${meta.minutes ? ` · ${fmt(meta.minutes)} min` : ""}${meta.steps ? ` · ${Number(meta.steps).toLocaleString("en-US")} steps` : ""} · ${kcal(meta.burned)} kcal burned</p>
       </div>
       <select class="who" id="person">${PEOPLE.map((p) => `<option value="${p.id}" ${p.id === person ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
     </div>
     ${banner()}
     <div class="field"><label class="label" for="date">Date</label><input class="textin" id="date" type="date" value="${esc(date)}"></div>
-    <div class="pair">
-      <div class="field"><label class="label" for="exercise">Exercise</label><input class="textin" id="exercise" value="${esc(meta.exercise)}" placeholder="Rest"></div>
-      <div class="field"><label class="label" for="burned">Burned</label><input class="textin" id="burned" inputmode="decimal" value="${meta.burned || ""}" placeholder="0"></div>
-    </div>
+    ${exerciseBlock(meta)}
     <div class="card">
       <div class="metric"><div class="name">Calories</div><div class="val">${kcal(totals.kcal)} <span>of ${kcal(g.kcal)}</span></div>${bar(totals.kcal, g.kcal, "var(--copper)", true)}</div>
       <div class="metric"><div class="name">Protein</div><div class="val">${fmt(totals.protein)} g <span>of ${fmt(g.protein)} g</span></div>${bar(totals.protein, g.protein, "var(--sage)", false)}</div>
@@ -355,6 +371,30 @@ function portionHTML(portion) {
       <div><b>${fmt(portion.fiber)} g</b><span>fiber</span></div>
     </div>
     <button class="btn" type="button" id="save-entry">${editingEntryId ? "Save changes" : "Add to today"}</button>`;
+}
+
+function exerciseBlock(meta) {
+  const names = exerciseNames();
+  const selected = meta.exercise || "";
+  const options = names.map((name) => `<option value="${esc(name)}" ${!addingExercise && name === selected ? "selected" : ""}>${esc(name)}</option>`).join("");
+  const typed = addingExercise && selected && !EXERCISE_SETS.includes(selected) ? selected : "";
+  return `
+    <div class="field">
+      <label class="label" for="exercise">Exercise set</label>
+      <div class="pair">
+        <select class="select" id="exercise">
+          <option value="" ${!selected && !addingExercise ? "selected" : ""}>Choose</option>
+          ${options}
+          <option value="__new__" ${addingExercise ? "selected" : ""}>New exercise</option>
+        </select>
+        <input class="textin" id="minutes" inputmode="numeric" value="${meta.minutes || ""}" placeholder="Minutes" aria-label="Exercise minutes">
+      </div>
+      ${addingExercise ? `<input class="textin" id="exercise-new" style="margin-top:8px" value="${esc(typed)}" placeholder="New exercise">` : ""}
+    </div>
+    <div class="field"><label class="label" for="steps">Steps</label><input class="textin" id="steps" inputmode="numeric" value="${meta.steps || ""}" placeholder="0"></div>
+    <div class="field"><label class="label" for="burned">Calories</label><input class="textin" id="burned" inputmode="decimal" value="${meta.burned || ""}" placeholder="0">
+      <p class="hint">Filled from steps at 24 kcal per 1,000. Edit it if that guess is off.</p>
+    </div>`;
 }
 
 function loggedAmount(entry) {
@@ -821,10 +861,36 @@ async function repairEntryUnits() {
   for (const entry of fixed) await cloud(() => pushEntry(entry));
 }
 
-function saveDayFromInputs() {
-  const exercise = document.getElementById("exercise")?.value ?? "";
-  const burned = Number(document.getElementById("burned")?.value) || 0;
-  const day = { person, date, exercise, burned };
+function readExerciseName() {
+  const picked = document.getElementById("exercise")?.value ?? "";
+  if (picked === "__new__") return document.getElementById("exercise-new")?.value.trim() ?? "";
+  return picked;
+}
+
+function saveDayFromInputs(source) {
+  const existing = state.days.find((d) => d.person === person && d.date === date) || { steps: 0, burned: 0 };
+  const steps = Number(document.getElementById("steps")?.value) || 0;
+  const minutes = Number(document.getElementById("minutes")?.value) || 0;
+  let burnedText = document.getElementById("burned")?.value ?? "";
+  if (source === "steps") {
+    const previous = stepCalories(existing.steps || 0);
+    const typed = burnedText === "" ? 0 : Number(burnedText);
+    const following = burnedText === "" || Math.abs((Number.isFinite(typed) ? typed : 0) - previous) < 0.05;
+    if (following) {
+      const next = stepCalories(steps);
+      burnedText = next ? String(next) : "";
+      const box = document.getElementById("burned");
+      if (box) box.value = burnedText;
+    }
+  }
+  const day = {
+    person,
+    date,
+    exercise: readExerciseName(),
+    minutes,
+    steps,
+    burned: Number(burnedText) || 0,
+  };
   const index = state.days.findIndex((d) => d.person === person && d.date === date);
   if (index >= 0) state.days[index] = day;
   else state.days.push(day);
@@ -857,7 +923,7 @@ function download(filename, text, type) {
 }
 
 function downloadLog(from, to) {
-  const header = ["Date", "Exercise", "Cal_burned", "Calories", "Protein", "Fat_unsat", "Fat_sat", "Fat_unsplit", "Carb_other", "Sugar", "Fibre", "Fat", "Carbohydrate", "Vitamins", "Minerals", "Foods"];
+  const header = ["Date", "Exercise", "Steps", "Cal_burned", "Calories", "Protein", "Fat_unsat", "Fat_sat", "Fat_unsplit", "Carb_other", "Sugar", "Fibre", "Fat", "Carbohydrate", "Vitamins", "Minerals", "Foods"];
   const lines = [header.join(",")];
   const keys = new Set(state.entries.filter((e) => e.person === person).map((e) => e.date));
   for (const day of state.days) if (day.person === person) keys.add(day.date);
@@ -868,7 +934,7 @@ function downloadLog(from, to) {
     const g = state.goals[person] || defaultGoals()[person];
     const meta = state.days.find((d) => d.person === person && d.date === when) || {};
     const cells = [
-      when, meta.exercise || "", meta.burned || 0, round1(totals.kcal), totals.protein,
+      when, meta.exercise || "", meta.steps || 0, meta.burned || 0, round1(totals.kcal), totals.protein,
       totals.fatUnsat, totals.fatSat, totals.fatUnsplit, totals.carbOther, totals.sugar, totals.fiber,
       totals.fat, totals.carb,
       `${hitCount(totals, VITAMINS.map(([k]) => k), g.vitamins)}/${VITAMINS.length}`,
@@ -1066,10 +1132,17 @@ function onChange(e) {
     }
     logFrom = "";
     logTo = "";
+    addingExercise = false;
     render();
     return;
   }
-  if (e.target.id === "date") { date = e.target.value || todayISO(); render(); return; }
+  if (e.target.id === "date") { date = e.target.value || todayISO(); addingExercise = false; render(); return; }
+  if (e.target.id === "exercise") {
+    addingExercise = e.target.value === "__new__";
+    if (!addingExercise) saveDayFromInputs();
+    render();
+    return;
+  }
   if (e.target.id === "log-from" || e.target.id === "log-to") {
     logFrom = document.getElementById("log-from")?.value || "";
     logTo = document.getElementById("log-to")?.value || "";
@@ -1122,7 +1195,8 @@ function onInput(e) {
     if (box) box.innerHTML = portionHTML(portionForDraft());
     return;
   }
-  if (e.target.id === "exercise" || e.target.id === "burned") { saveDayFromInputs(); return; }
+  if (e.target.id === "exercise-new" || e.target.id === "minutes" || e.target.id === "burned") { saveDayFromInputs(); return; }
+  if (e.target.id === "steps") { saveDayFromInputs("steps"); return; }
   if (e.target.id === "food-filter") {
     draft.foodFilter = e.target.value;
     render();
@@ -1175,7 +1249,18 @@ async function boot() {
   try {
     const remote = await pullRemote(foodsSeed);
     if (remote.state) {
+      const localDays = state.days;
       state = remote.state;
+      state.days = state.days.map((day) => {
+        if (day.steps != null && day.minutes != null) return day;
+        const local = localDays.find((item) => item.person === day.person && item.date === day.date);
+        if (!local) return { ...day, steps: day.steps || 0, minutes: day.minutes || 0 };
+        return {
+          ...day,
+          steps: day.steps == null ? (local.steps || 0) : day.steps,
+          minutes: day.minutes == null ? (local.minutes || 0) : day.minutes,
+        };
+      });
       mode = "shared";
       syncError = "";
       saveLocal(state);
