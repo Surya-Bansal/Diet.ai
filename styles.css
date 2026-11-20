@@ -120,6 +120,20 @@ tr:last-child td { border-bottom: 0; }
   width: 100%; margin-top: 12px; height: 48px; border: 0; border-radius: 14px;
   background: var(--copper); color: #24180e; font-weight: 750; font-size: 15px;
 }
+.btn.secondary { background: #2a312b; color: var(--text); }
+.ticks { display: flex; flex-wrap: wrap; gap: 8px; }
+.tick {
+  width: 32px; height: 32px; border-radius: 8px; padding: 0;
+  border: 1px solid var(--line); background: var(--inset); color: transparent;
+  font-size: 16px; font-weight: 750;
+}
+.tick.on { background: #3a2c1e; color: var(--copper); border-color: #6a4c30; }
+.supp {
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid #262b26;
+}
+.supp:last-child { border-bottom: 0; }
+.supp .mini { width: 72px; min-height: 40px; }
 .centerlink { display: block; text-align: center; margin-top: 14px; }
 .warn { color: var(--over); font-size: 13px; margin-top: 8px; }
 .banner {

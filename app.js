@@ -1,6 +1,6 @@
 import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
-  scaleFood, sumEntries, hitCount, foodsText, mealGroups, microValue,
+  scaleFood, sumEntries, hitCount, foodsText, mealGroups, microValue, referenceAmount,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
@@ -27,7 +27,9 @@ let skipCapture = false;
 let person = localStorage.getItem("diet-log-person") || "surya";
 let date = todayISO();
 let notice = "";
-let draft = { meal: "Lunch", category: "", foodId: "", amount: "", unit: "" };
+let draft = { meal: "Lunch", category: "", foodId: "", amount: "", unit: "", foodQuery: "" };
+let plate = [];
+let supplementChecks = null;
 let lookup = { q: "", saved: [], found: [], status: "", form: null };
 let editingId = "";
 let editingEntryId = "";
@@ -62,6 +64,7 @@ function goals() {
     ...saved,
     vitamins: { ...base.vitamins, ...(saved.vitamins || {}) },
     minerals: { ...base.minerals, ...(saved.minerals || {}) },
+    supplements: Array.isArray(saved.supplements) ? saved.supplements : [],
   };
 }
 
@@ -146,6 +149,99 @@ function selectedUnit() {
   return allowedUnit(selectedFood(), draft.unit);
 }
 
+function foodReferenceLabel(food) {
+  const amount = referenceAmount(food, food.unit);
+  if (food.unit === "count") return `${trimNum(amount)} count`;
+  if (food.unit === "ml") return `${trimNum(amount)} ml`;
+  return `${trimNum(amount)} g`;
+}
+
+function supplementTargets() {
+  return (goals().supplements || [])
+    .map((item) => ({ foodId: item.foodId, count: Math.max(0, Math.round(Number(item.count) || 0)) }))
+    .filter((item) => item.foodId && item.count > 0);
+}
+
+function supplementChoices() {
+  return currentFoods()
+    .filter((food) => food.category === "Supplements")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function takenServings(foodId) {
+  return state.entries
+    .filter((entry) => entry.person === person && entry.date === date && entry.foodId === foodId && entry.unit === "count")
+    .reduce((sum, entry) => sum + (Number(entry.amount) || 0), 0);
+}
+
+function ensureSupplementChecks() {
+  if (supplementChecks) return;
+  supplementChecks = {};
+  for (const target of supplementTargets()) supplementChecks[target.foodId] = takenServings(target.foodId);
+}
+
+function supplementScore() {
+  let goal = 0;
+  let taken = 0;
+  for (const target of supplementTargets()) {
+    if (!currentFoods().some((food) => food.id === target.foodId)) continue;
+    goal += target.count;
+    taken += takenServings(target.foodId);
+  }
+  return { goal, taken, pct: goal ? Math.round((taken / goal) * 100) : 0 };
+}
+
+function supplementBlock() {
+  const targets = supplementTargets();
+  ensureSupplementChecks();
+  if (!targets.length) {
+    return `<h2>Supplements</h2><p class="hint">Set the supplements and daily counts on Goals. They show up here as boxes.</p>`;
+  }
+  const rows = targets.map((target) => {
+    const food = currentFoods().find((item) => item.id === target.foodId);
+    if (!food) return "";
+    const desired = Number(supplementChecks[target.foodId]) || 0;
+    const boxes = Array.from({ length: target.count }, (_, index) => {
+      const on = index < desired;
+      return `<button type="button" class="tick ${on ? "on" : ""}" data-supp="${esc(food.id)}" data-n="${index + 1}" aria-pressed="${on ? "true" : "false"}" aria-label="${esc(food.name)} ${index + 1}">${on ? "✓" : ""}</button>`;
+    }).join("");
+    return `<div class="supp"><div><b>${esc(food.name)}</b><div class="hint">${fmt(desired)} of ${target.count}</div></div><div class="ticks">${boxes}</div></div>`;
+  }).join("");
+  return `<h2>Supplements</h2><p class="hint">Filled boxes are already logged today. Tick what you are taking now, then save. This is separate from the meal.</p><div class="card">${rows}</div><button class="btn secondary" type="button" id="save-supplements">Save supplements</button>`;
+}
+
+function writeSupplements(list) {
+  const next = { ...goals(), supplements: list };
+  state.goals[person] = next;
+  persist();
+  cloud(() => pushGoals(person, next));
+}
+
+function supplementEditor() {
+  const foods = supplementChoices();
+  const saved = Array.isArray(goals().supplements) ? goals().supplements : [];
+  const rows = saved.filter((item) => item.foodId).map((item) => {
+    const food = foods.find((entry) => entry.id === item.foodId) || state.foods.find((entry) => entry.id === item.foodId);
+    return `
+      <div class="supp">
+        <div><b>${esc(food?.name || "Removed")}</b></div>
+        <input class="mini" data-supp-count="${esc(item.foodId)}" inputmode="numeric" value="${esc(item.count)}" aria-label="Count a day">
+        <button type="button" class="textbtn" data-supp-remove="${esc(item.foodId)}">Remove</button>
+      </div>`;
+  }).join("");
+  const options = foods.map((food) => `<option value="${esc(food.id)}">${esc(food.name)}</option>`).join("");
+  return `
+    <h2>Supplements</h2>
+    <p class="hint">Choose what you take and how many in a day. The Add page shows one box for each.</p>
+    <div class="card">${rows || `<p class="hint">None yet.</p>`}
+      <div class="field"><label class="label" for="supp-food">Add</label>
+        <select class="select" id="supp-food"><option value="">Choose</option>${options}</select>
+      </div>
+      <div class="field"><label class="label" for="supp-count">Count a day</label><input class="textin" id="supp-count" inputmode="numeric" value="1"></div>
+      <button class="btn secondary" type="button" id="supp-add">Add supplement</button>
+    </div>`;
+}
+
 function icon(name) {
   const emoji = { today: "🧾", add: "🍽️", foods: "📕", log: "📜", goals: "🎯" };
   return `<span class="nav-emoji">${emoji[name] || ""}</span>`;
@@ -177,6 +273,7 @@ function todayView() {
   const groups = mealGroups(entries);
   const vit = hitCount(totals, VITAMINS.map(([k]) => k), g.vitamins);
   const min = hitCount(totals, MINERALS.map(([k]) => k), g.minerals);
+  const supp = supplementScore();
   const head = groups.map((group) => `<th>${esc(group.meal)}</th>`).join("");
   const row = (label, pick) => {
     const cells = groups.map((group) => `<td>${pick(group.totals)}</td>`).join("");
@@ -220,6 +317,7 @@ function todayView() {
       <div class="metric"><div class="name">Protein</div><div class="val">${fmt(totals.protein)} g <span>of ${fmt(g.protein)} g</span></div>${bar(totals.protein, g.protein, "var(--sage)", false)}</div>
       <div class="metric"><div class="name">Fat</div><div class="val">${fmt(totals.fat)} g <span>of ${fmt(g.fatMax)} g max</span></div>${bar(totals.fat, g.fatMax, "var(--wheat)", true)}<div class="note">${fatNote(totals)}</div></div>
       <div class="metric"><div class="name">Carbohydrate</div><div class="val">${fmt(totals.carb)} g <span>of ${fmt(g.carbMax)} g max</span></div>${bar(totals.carb, g.carbMax, "var(--copper)", true)}<div class="note">${fmt(totals.carbOther)} g other · ${fmt(totals.sugar)} g sugar · ${fmt(totals.fiber)} g fiber</div></div>
+      <div class="metric"><div class="name">Supplements</div><div class="val">${supp.goal ? `${supp.pct}%` : "—"} <span>${supp.goal ? `${supp.taken} of ${supp.goal}` : "Set on Goals"}</span></div>${supp.goal ? bar(supp.taken, supp.goal, "var(--sage)", true) : ""}</div>
     </div>
     <div class="stats">
       <div class="stat"><b>${fmt(totals.sugar)} g</b><em>Sugar · of ${fmt(g.sugarMax)} g</em></div>
@@ -340,6 +438,31 @@ function logView() {
     <button class="textbtn centerlink" type="button" id="download-range">Download this range</button>`;
 }
 
+function foodMatches() {
+  const q = (draft.foodQuery || "").trim().toLowerCase();
+  if (!q) return [];
+  return currentFoods()
+    .filter((food) => food.name.toLowerCase().includes(q) || food.category.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 8);
+}
+
+function plateBlock() {
+  if (!plate.length) return "";
+  const rows = plate.map((line, index) => {
+    const food = currentFoods().find((item) => item.id === line.foodId);
+    const scaled = food ? scaleFood(food, line.amount, line.unit) : null;
+    return `
+      <div class="entry">
+        <div><b>${esc(food?.name || "Food")}</b>
+          <div class="hint">${esc(loggedAmount(line))}${scaled ? ` · ${kcal(scaled.kcal)} kcal` : ""}</div>
+        </div>
+        <button type="button" class="x" data-plate="${index}" aria-label="Remove">×</button>
+      </div>`;
+  }).join("");
+  return `<div class="card"><div class="label">This meal</div>${rows}</div>`;
+}
+
 function addView() {
   const editing = entryBeingEdited();
   const food = selectedFood();
@@ -348,23 +471,30 @@ function addView() {
   const list = foodsInCategory();
   const canGrams = food && food.servingGrams;
   const portion = portionForDraft();
+  const matches = foodMatches();
   return `
     <div class="top"><div><h1>${editing ? "Edit" : "Add"}</h1><p class="sub">${esc(formatDate(date))} · ${editing ? `Editing ${esc(editing.name)}` : esc(personName())}</p></div></div>
     <div class="field"><div class="label">Meal</div><div class="segs">${MEALS.map((m) => `<button type="button" class="seg ${draft.meal === m ? "on" : ""}" data-meal="${esc(m)}">${esc(m)}</button>`).join("")}</div></div>
+    ${editing ? "" : plateBlock()}
+    <div class="field"><label class="label" for="food-query">Search</label>
+      <input class="textin" id="food-query" value="${esc(draft.foodQuery || "")}" placeholder="Search your dishes" autocomplete="off">
+    </div>
+    ${matches.map((item) => `<button type="button" class="result" data-food="${esc(item.id)}"><b>${esc(item.name)}</b><span>${esc(item.category)} · ${esc(item.servingLabel)} · ${kcal(item.kcal)} kcal</span></button>`).join("")}
     <div class="field"><label class="label" for="category">Category</label>
       <select class="select" id="category"><option value="">Choose</option>${cats.map((c) => `<option ${c === draft.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
     </div>
     <div class="field"><label class="label" for="food">Food</label>
       <select class="select" id="food" ${draft.category ? "" : "disabled"}><option value="">Choose</option>${list.map((f) => `<option value="${esc(f.id)}" ${f.id === draft.foodId ? "selected" : ""}>${esc(f.name)}</option>`).join("")}</select>
     </div>
-    <div class="field"><label class="label" for="amount">Amount</label>
+    <div class="field"><label class="label" for="amount">Amount eaten</label>
       <div class="amount"><input id="amount" inputmode="decimal" value="${esc(draft.amount)}" placeholder="0"><span class="unit">${unitWord(unit)}</span></div>
-      <p class="hint">${food ? `List serving is ${esc(food.servingLabel)}.` : "Choose a food."} ${food?.unit === "count" && canGrams ? "You can switch to grams." : ""}</p>
+      <p class="hint">${food ? `Numbers are for ${esc(foodReferenceLabel(food))}. This amount is scaled from that.` : "Search, or choose a category and a food."} ${food?.unit === "count" && canGrams ? "You can switch to grams." : ""}</p>
       ${food?.unit === "count" && canGrams ? `<button type="button" class="textbtn" id="unit-toggle">Use ${unit === "count" ? "grams" : "count"} instead</button>` : ""}
     </div>
     <div class="card" id="portion">${portionHTML(portion)}</div>
+    ${editing ? `<button class="btn" type="button" id="save-entry">Save changes</button>` : `<button class="btn secondary" type="button" id="add-another">Add another food</button><button class="btn" type="button" id="save-entry">Add to today</button>`}
     <button class="centerlink textbtn" type="button" data-nav="search">Food not in the list</button>
-    ${editing ? `<button class="centerlink textbtn" type="button" id="cancel-edit">Cancel</button>` : ""}`;
+    ${editing ? `<button class="centerlink textbtn" type="button" id="cancel-edit">Cancel</button>` : supplementBlock()}`;
 }
 
 function portionHTML(portion) {
@@ -378,8 +508,7 @@ function portionHTML(portion) {
       <div><b>${fmt(carbTotal(portion))} g</b><span>carbohydrate</span></div>
       <div><b>${fmt(portion.sugar)} g</b><span>sugar</span></div>
       <div><b>${fmt(portion.fiber)} g</b><span>fiber</span></div>
-    </div>
-    <button class="btn" type="button" id="save-entry">${editingEntryId ? "Save changes" : "Add to today"}</button>`;
+    </div>`;
 }
 
 function exerciseBlock(meta) {
@@ -474,6 +603,9 @@ function formFromFood(food) {
     source: food.source,
     serving: unit === "count" ? (food.servingCount || 1) : (food.servingGrams ?? ""),
     servingUnit: unit,
+    numberBasis: Number(food.perAmount) > 0
+      ? Number(food.perAmount)
+      : Number(unit === "count" ? (food.servingCount || 1) : (food.servingGrams || 100)),
     ...microsFromFood(food),
   };
 }
@@ -495,6 +627,7 @@ function formFromSearch(food) {
     source: food.source,
     serving: "100",
     servingUnit: "g",
+    numberBasis: 100,
     ...microsFromFood(food),
   };
 }
@@ -508,7 +641,7 @@ function searchView() {
   return `
     <button class="back" type="button" id="search-back">Back</button>
     <h1>New food</h1>
-    <p class="sub">Search fills published averages for 100 g. Set the serving, then confirm the numbers for that serving.</p>
+    <p class="sub">Search fills published averages for 100 g. Change the serving size and the numbers update for that serving.</p>
     <div class="field"><label class="label" for="q">Name</label><input class="textin" id="q" value="${esc(lookup.q)}" placeholder="chayote dal sambhar" autocomplete="off"></div>
     <p class="hint">${esc(lookup.status)}</p>
     ${results.map((r, i) => `
@@ -551,7 +684,7 @@ function confirmForm(heading = "Confirm this serving", buttonId = "save-food", b
           </select>
         </div>
       </div>
-      <p class="hint">The numbers below are for this serving.</p>
+      <p class="hint">The numbers below are for this serving. Changing the serving size updates them.</p>
       <div class="pair">
         <div class="field"><label class="label">Calories</label><input class="mini" id="nf-kcal" inputmode="decimal" value="${esc(f.kcal)}"></div>
         <div class="field"><label class="label">Protein</label><input class="mini" id="nf-protein" inputmode="decimal" value="${esc(f.protein)}"></div>
@@ -615,6 +748,7 @@ function goalsView() {
     <p class="hint">A vitamin or mineral counts when today's foods clear the minimum. Empty cells on a food do not count.</p>
     <details><summary>Vitamin minimums (${VITAMINS.length})</summary>${nutrient(VITAMINS, "vitamins")}</details>
     <details><summary>Mineral minimums (${MINERALS.length})</summary>${nutrient(MINERALS, "minerals")}</details>
+    ${supplementEditor()}
     <h2>Shared database</h2>
     <div class="card">
       <p class="foods">Free hosting: put this folder on Cloudflare Pages. Free database: create a Supabase project, run <b>supabase/schema.sql</b>, then paste the project URL and anon key here. Days stay separate for Surya, Sahi, and Nonu. Surya and Sahi share one food list. Nonu has her own.</p>
@@ -698,6 +832,38 @@ function render() {
   }
 }
 
+function scaleFormValue(value, factor) {
+  if (value === "" || value == null) return value;
+  const number = Number(value);
+  return Number.isFinite(number) ? String(round1(number * factor)) : value;
+}
+
+function applyServingResize() {
+  captureFoodForm();
+  const form = lookup.form;
+  if (!form) return;
+  const next = Number(form.serving);
+  const prev = Number(form.numberBasis);
+  const unit = form.servingUnit || "g";
+  if (unit === "count" || !(next > 0) || !(prev > 0) || Math.abs(next - prev) < 0.001) {
+    if (next > 0) form.numberBasis = next;
+    return;
+  }
+  const factor = next / prev;
+  for (const key of ["kcal", "protein", "fat", "sat", "carb", "sugar", "fiber"]) {
+    form[key] = scaleFormValue(form[key], factor);
+  }
+  if (form.micros) {
+    form.micros = Object.fromEntries(Object.entries(form.micros).map(([key, value]) => [key, scaleFormValue(value, factor)]));
+  }
+  form.numberBasis = next;
+  form.serving = String(next);
+  form.source = String(form.source || "").replace(
+    /per\s+[\d.]+\s*(g|ml)\b/i,
+    `per ${trimNum(next)} ${unit === "ml" ? "ml" : "g"}`,
+  );
+}
+
 function readForm() {
   const f = lookup.form || {};
   const satRaw = f.sat ?? "";
@@ -751,9 +917,10 @@ function servingFields(form, existing) {
       servingCount: size,
       servingGrams: existing && existing.unit === "count" ? (existing.servingGrams ?? null) : null,
       servingLabel,
+      perAmount: size,
     };
   }
-  return { unit, servingCount: null, servingGrams: size, servingLabel };
+  return { unit, servingCount: null, servingGrams: size, servingLabel, perAmount: size };
 }
 
 function foodFromForm(id) {
@@ -803,36 +970,134 @@ async function updateFood() {
   render();
 }
 
+function entryFromLine(food, amount, unit) {
+  return {
+    id: crypto.randomUUID(),
+    person, date, meal: draft.meal,
+    foodId: food.id,
+    name: food.name,
+    amount, unit,
+    ...scaleFood(food, amount, unit),
+  };
+}
+
 async function addEntry() {
   const editing = entryBeingEdited();
   const food = selectedFood();
   const amount = Number(draft.amount);
   const unit = selectedUnit();
-  if (!(amount > 0) || (!food && !editing)) {
+  if (editing) {
+    if (!(amount > 0) || (!food && !editing)) {
+      notice = "Choose a food and an amount.";
+      render();
+      return;
+    }
+    const scaled = !food || (food.id === editing.foodId && unit === editing.unit)
+      ? scaleSnapshot(editing, amount)
+      : scaleFood(food, amount, unit);
+    const entry = {
+      id: editing.id,
+      person, date, meal: draft.meal,
+      foodId: food ? food.id : editing.foodId,
+      name: food ? food.name : editing.name,
+      amount, unit, ...scaled,
+    };
+    const index = state.entries.findIndex((item) => item.id === editing.id);
+    state.entries[index] = entry;
+    persist();
+    await cloud(() => pushEntry(entry));
+    draft.amount = "";
+    editingEntryId = "";
+    notice = "";
+    view = "today";
+    render();
+    return;
+  }
+  const lines = plate.map((line) => ({ ...line }));
+  if (food && amount > 0) lines.push({ foodId: food.id, amount, unit });
+  if (!lines.length) {
     notice = "Choose a food and an amount.";
     render();
     return;
   }
-  const scaled = editing && (!food || (food.id === editing.foodId && unit === editing.unit))
-    ? scaleSnapshot(editing, amount)
-    : scaleFood(food, amount, unit);
-  const entry = {
-    id: editing ? editing.id : crypto.randomUUID(),
-    person, date, meal: draft.meal,
-    foodId: food ? food.id : editing.foodId,
-    name: food ? food.name : editing.name,
-    amount, unit, ...scaled,
-  };
-  if (editing) {
-    const index = state.entries.findIndex((e) => e.id === editing.id);
-    state.entries[index] = entry;
-  } else state.entries.push(entry);
+  const entries = [];
+  for (const line of lines) {
+    const item = currentFoods().find((candidate) => candidate.id === line.foodId);
+    if (!item) continue;
+    entries.push(entryFromLine(item, line.amount, line.unit));
+  }
+  if (!entries.length) {
+    notice = "Choose a food and an amount.";
+    render();
+    return;
+  }
+  state.entries.push(...entries);
   persist();
-  await cloud(() => pushEntry(entry));
+  for (const entry of entries) await cloud(() => pushEntry(entry));
+  plate = [];
   draft.amount = "";
+  draft.foodId = "";
+  draft.foodQuery = "";
   editingEntryId = "";
   notice = "";
   view = "today";
+  render();
+}
+
+function addAnother() {
+  const food = selectedFood();
+  const amount = Number(draft.amount);
+  if (!food || !(amount > 0)) {
+    notice = "Choose a food and an amount.";
+    render();
+    return;
+  }
+  plate.push({ foodId: food.id, amount, unit: selectedUnit() });
+  draft.foodId = "";
+  draft.amount = "";
+  draft.foodQuery = "";
+  notice = "";
+  render();
+}
+
+async function saveSupplementTicks() {
+  ensureSupplementChecks();
+  for (const target of supplementTargets()) {
+    const food = currentFoods().find((item) => item.id === target.foodId);
+    if (!food) continue;
+    const desired = Math.max(0, Math.round(Number(supplementChecks[target.foodId]) || 0));
+    let have = takenServings(food.id);
+    if (desired > have) {
+      const entry = entryFromLine(food, desired - have, "count");
+      entry.supplement = true;
+      state.entries.push(entry);
+      persist();
+      await cloud(() => pushEntry(entry));
+      continue;
+    }
+    let extra = have - desired;
+    const rows = state.entries.filter((entry) => entry.person === person && entry.date === date && entry.foodId === food.id && entry.unit === "count");
+    for (let index = rows.length - 1; index >= 0 && extra > 0; index -= 1) {
+      const entry = rows[index];
+      const amount = Number(entry.amount) || 0;
+      if (amount <= extra + 0.001) {
+        extra -= amount;
+        state.entries = state.entries.filter((item) => item.id !== entry.id);
+        await cloud(() => removeEntryRemote(entry.id));
+      } else {
+        const nextAmount = round1(amount - extra);
+        const scaled = amount > 0 ? scaleSnapshot(entry, nextAmount) : scaleFood(food, nextAmount, "count");
+        const updated = { ...entry, amount: nextAmount, ...scaled };
+        const at = state.entries.findIndex((item) => item.id === entry.id);
+        if (at >= 0) state.entries[at] = updated;
+        await cloud(() => pushEntry(updated));
+        extra = 0;
+      }
+    }
+    persist();
+  }
+  supplementChecks = null;
+  notice = "Supplements saved.";
   render();
 }
 
@@ -1057,6 +1322,58 @@ function onClick(e) {
     return;
   }
   if (e.target.id === "save-entry") { addEntry(); return; }
+  if (e.target.id === "add-another") { addAnother(); return; }
+  if (e.target.id === "save-supplements") { saveSupplementTicks(); return; }
+  const plateRemove = e.target.closest("[data-plate]");
+  if (plateRemove) {
+    plate.splice(Number(plateRemove.dataset.plate), 1);
+    render();
+    return;
+  }
+  const foodPick = e.target.closest("[data-food]");
+  if (foodPick) {
+    const picked = currentFoods().find((item) => item.id === foodPick.dataset.food);
+    if (!picked) return;
+    draft.category = picked.category;
+    draft.foodId = picked.id;
+    draft.unit = picked.unit;
+    draft.foodQuery = "";
+    render();
+    return;
+  }
+  const tick = e.target.closest("[data-supp]");
+  if (tick) {
+    ensureSupplementChecks();
+    const foodId = tick.dataset.supp;
+    const n = Number(tick.dataset.n) || 0;
+    const current = Number(supplementChecks[foodId]) || 0;
+    supplementChecks[foodId] = current === n ? n - 1 : n;
+    render();
+    return;
+  }
+  if (e.target.id === "supp-add") {
+    const foodId = document.getElementById("supp-food")?.value || "";
+    const count = Math.max(1, Math.round(Number(document.getElementById("supp-count")?.value) || 1));
+    if (!foodId) {
+      notice = "Choose a supplement.";
+      render();
+      return;
+    }
+    const list = (goals().supplements || []).filter((item) => item.foodId && item.foodId !== foodId);
+    list.push({ foodId, count });
+    writeSupplements(list);
+    supplementChecks = null;
+    notice = "";
+    render();
+    return;
+  }
+  const suppRemove = e.target.closest("[data-supp-remove]");
+  if (suppRemove) {
+    writeSupplements((goals().supplements || []).filter((item) => item.foodId !== suppRemove.dataset.suppRemove));
+    supplementChecks = null;
+    render();
+    return;
+  }
   const del = e.target.closest("[data-del]");
   if (del) { deleteEntry(del.dataset.del); return; }
   const entryBtn = e.target.closest("[data-entry]");
@@ -1106,7 +1423,7 @@ function onClick(e) {
     lookup.form = {
       name: lookup.q, category: "", newCategory: false, newCategoryName: "",
       kcal: "", protein: "", fat: "", sat: "", carb: "", sugar: "", fiber: "",
-      source: "Typed from a label", serving: "100", servingUnit: "g",
+      source: "Typed from a label", serving: "100", servingUnit: "g", numberBasis: 100,
       micros: blankMicros(), showMicros: false,
     };
     scrollTarget = "food-editor";
@@ -1170,10 +1487,27 @@ function onChange(e) {
     logFrom = "";
     logTo = "";
     addingExercise = false;
+    plate = [];
+    supplementChecks = null;
+    draft.foodQuery = "";
     render();
     return;
   }
-  if (e.target.id === "date") { date = e.target.value || todayISO(); addingExercise = false; render(); return; }
+  if (e.target.id === "date") { date = e.target.value || todayISO(); addingExercise = false; supplementChecks = null; render(); return; }
+  if (e.target.id === "nf-serving") {
+    applyServingResize();
+    skipCapture = true;
+    render();
+    return;
+  }
+  if (e.target.dataset.suppCount) {
+    const foodId = e.target.dataset.suppCount;
+    const count = Math.max(1, Math.round(Number(e.target.value) || 1));
+    writeSupplements((goals().supplements || []).map((item) => item.foodId === foodId ? { ...item, count } : item));
+    supplementChecks = null;
+    render();
+    return;
+  }
   if (e.target.id === "exercise") {
     addingExercise = e.target.value === "__new__";
     if (!addingExercise) saveDayFromInputs("activity");
@@ -1230,6 +1564,11 @@ function onInput(e) {
     draft.amount = e.target.value;
     const box = document.getElementById("portion");
     if (box) box.innerHTML = portionHTML(portionForDraft());
+    return;
+  }
+  if (e.target.id === "food-query") {
+    draft.foodQuery = e.target.value;
+    render();
     return;
   }
   if (e.target.id === "exercise-new" || e.target.id === "minutes" || e.target.id === "steps") { saveDayFromInputs("activity"); return; }

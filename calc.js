@@ -92,6 +92,7 @@ export function defaultGoals() {
     sugarMax: 36,
     vitamins: { ...VITAMIN_MIN },
     minerals: { ...MINERAL_MIN },
+    supplements: [],
   };
   return {
     surya: { ...base, kcal: 2050, protein: 130, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN } },
@@ -125,9 +126,21 @@ export function fromLabelTotals(src) {
   };
 }
 
+export function referenceAmount(food, unit) {
+  const use = unit || food.unit || "g";
+  if (use === "count") {
+    if (food.unit === "count" && Number(food.perAmount) > 0) return Number(food.perAmount);
+    return Number(food.servingCount) > 0 ? Number(food.servingCount) : 1;
+  }
+  if (food.unit !== "count" && Number(food.perAmount) > 0) return Number(food.perAmount);
+  if (/per\s*100\s*(g|ml)\b/i.test(String(food.source || ""))) return 100;
+  const grams = Number(food.servingGrams);
+  return grams > 0 ? grams : 0;
+}
+
 export function scaleFood(food, amount, unit) {
   const use = unit || food.unit;
-  const basis = use === "count" ? (Number(food.servingCount) > 0 ? Number(food.servingCount) : 1) : Number(food.servingGrams);
+  const basis = referenceAmount(food, use);
   const factor = basis ? Number(amount) / basis : 0;
   const n = (v) => round1((Number(v) || 0) * factor);
   const micros = {};
@@ -283,5 +296,17 @@ export function selfTest(foods) {
   check("count serving of 2", Math.abs(two.kcal - 50) < 0.05, two.kcal);
   const ml = scaleFood({ kcal: 40, protein: 0, fatUnsat: 0, fatSat: 0, fatSplit: true, carbOther: 0, sugar: 0, fiber: 0, unit: "ml", servingGrams: 200, micros: {} }, 100, "ml");
   check("ml scales like a serving", Math.abs(ml.kcal - 20) < 0.05, ml.kcal);
+  const legacy = scaleFood({
+    kcal: 97, protein: 3.4, fatUnsat: 4.4, fatSat: 0, fatSplit: false,
+    carbOther: 3.8, sugar: 3.3, fiber: 3.5, sugarKnown: true,
+    unit: "ml", servingGrams: 350, source: "Approximate, per 100 g.", micros: {},
+  }, 350, "ml");
+  check("eaten amount uses per 100 g when the serving label drifted", Math.abs(legacy.kcal - 339.5) < 0.2, legacy.kcal);
+  const matched = scaleFood({
+    kcal: 291, protein: 10.2, fatUnsat: 13.2, fatSat: 0, fatSplit: false,
+    carbOther: 11.4, sugar: 9.9, fiber: 10.5, sugarKnown: true,
+    unit: "g", servingGrams: 300, perAmount: 300, source: "Approximate, per 100 g.", micros: {},
+  }, 150, "g");
+  check("rescaled serving is the basis", Math.abs(matched.kcal - 145.5) < 0.2, matched.kcal);
   return lines;
 }
