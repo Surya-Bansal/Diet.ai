@@ -16,20 +16,20 @@ export function normalizeFood(food) {
 export const MEALS = ["Breakfast", "Lunch", "Snack", "Dinner", "Protocol"];
 
 export const VITAMINS = [
-  ["vit_a", "A", "mcg"],
-  ["vit_b1", "B1", "mg"],
-  ["vit_b2", "B2", "mg"],
-  ["vit_b3", "B3", "mg"],
-  ["vit_b4", "B4", "mg"],
-  ["vit_b5", "B5", "mg"],
-  ["vit_b6", "B6", "mg"],
-  ["vit_b7", "B7", "mcg"],
-  ["vit_b9", "B9", "mcg"],
-  ["vit_b12", "B12", "mcg"],
-  ["vit_c", "C", "mg"],
-  ["vit_d", "D", "mcg"],
-  ["vit_e", "E", "mg"],
-  ["vit_k", "K", "mcg"],
+  ["vit_a", "Retinol - A", "mcg"],
+  ["vit_b1", "Thiamine - B1", "mg"],
+  ["vit_b2", "Riboflavin - B2", "mg"],
+  ["vit_b3", "Niacin - B3", "mg"],
+  ["vit_b4", "Adenine - B4", "mg"],
+  ["vit_b5", "Pantothenic acid - B5", "mg"],
+  ["vit_b6", "Pyridoxine - B6", "mg"],
+  ["vit_b7", "Biotin - B7", "mcg"],
+  ["vit_b9", "Folate - B9", "mcg"],
+  ["vit_b12", "Cobalamin - B12", "mcg"],
+  ["vit_c", "Ascorbic acid - C", "mg"],
+  ["vit_d", "Calciferol - D", "mcg"],
+  ["vit_e", "Tocopherol - E", "mg"],
+  ["vit_k", "Phylloquinone - K", "mcg"],
 ];
 
 export const MINERALS = [

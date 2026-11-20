@@ -32,7 +32,7 @@ let plate = [];
 let supplementChecks = null;
 let lookup = { q: "", saved: [], found: [], status: "", form: null };
 let editingId = "";
-let editingEntryId = "";
+let editingMeal = "";
 let logFrom = "";
 let logTo = "";
 
@@ -291,16 +291,7 @@ function todayView() {
         ${row("Sugar", (t) => `${fmt(t.sugar)} g`)}
       </tbody>
     </table></div></div>` : "";
-  const lines = entries.map((e) => `
-    <div class="entry">
-      <div><b>${esc(e.meal)}</b> · ${esc(loggedAmount(e))} ${esc(e.name)}
-        <div class="hint">${kcal(e.kcal)} kcal · ${fmt(e.protein)} g protein</div>
-      </div>
-      <div class="entry-actions">
-        <button type="button" class="textbtn" data-entry="${esc(e.id)}">Edit</button>
-        <button type="button" class="x" data-del="${esc(e.id)}" aria-label="Remove">×</button>
-      </div>
-    </div>`).join("");
+  const lines = mealList(entries);
   return `
     <div class="top">
       <div>
@@ -330,8 +321,34 @@ function todayView() {
     ${lines ? `<div class="card">${lines}</div>` : `<button class="btn" type="button" data-nav="add">Add a food</button>`}`;
 }
 
-function entryBeingEdited() {
-  return state.entries.find((e) => e.id === editingEntryId) || null;
+function mealList(entries) {
+  const groups = mealGroups(entries).slice().sort((a, b) => {
+    const rank = (meal) => {
+      const index = MEALS.indexOf(meal);
+      return index < 0 ? MEALS.length : index;
+    };
+    return rank(a.meal) - rank(b.meal);
+  });
+  return groups.map((group) => {
+    const foods = group.entries.map((entry) => `
+      <div class="entry">
+        <div>${esc(loggedAmount(entry))} ${esc(entry.name)}
+          <div class="hint">${kcal(entry.kcal)} kcal · ${fmt(entry.protein)} g protein</div>
+        </div>
+        <button type="button" class="x" data-del="${esc(entry.id)}" aria-label="Remove">×</button>
+      </div>`).join("");
+    return `
+      <div class="meal">
+        <div class="meal-head">
+          <b>${esc(group.meal)}</b>
+          <div class="entry-actions">
+            <span class="hint">${kcal(group.totals.kcal)} kcal</span>
+            <button type="button" class="textbtn" data-meal-edit="${esc(group.meal)}">Edit</button>
+          </div>
+        </div>
+        ${foods}
+      </div>`;
+  }).join("");
 }
 
 function scaleSnapshot(entry, amount) {
@@ -357,26 +374,39 @@ function portionForDraft() {
   const amount = Number(draft.amount);
   if (!(amount > 0)) return null;
   const food = selectedFood();
-  const unit = selectedUnit();
-  const editing = entryBeingEdited();
-  if (editing && (!food || (food.id === editing.foodId && unit === editing.unit)) && Number(editing.amount) > 0) {
-    return scaleSnapshot(editing, amount);
-  }
   if (!food) return null;
-  return scaleFood(food, amount, unit);
+  return scaleFood(food, amount, selectedUnit());
 }
 
-function beginEditEntry(id) {
-  const entry = state.entries.find((e) => e.id === id);
-  if (!entry) return;
-  editingEntryId = id;
-  date = entry.date;
-  const food = currentFoods().find((f) => f.id === entry.foodId);
-  draft.meal = entry.meal;
-  draft.category = food ? food.category : "";
-  draft.foodId = food ? food.id : "";
-  draft.amount = String(entry.amount);
-  draft.unit = allowedUnit(food, entry.unit);
+function linePortion(line) {
+  const amount = Number(line.amount);
+  if (!(amount > 0)) return null;
+  const existing = line.entryId ? state.entries.find((entry) => entry.id === line.entryId) : null;
+  if (existing && existing.foodId === line.foodId && existing.unit === line.unit && Number(existing.amount) > 0) {
+    return scaleSnapshot(existing, amount);
+  }
+  const food = currentFoods().find((item) => item.id === line.foodId);
+  if (!food) return null;
+  return scaleFood(food, amount, line.unit || food.unit);
+}
+
+function beginEditMeal(meal) {
+  const rows = dayEntries().filter((entry) => entry.meal === meal);
+  if (!rows.length) return;
+  editingMeal = meal;
+  plate = rows.map((entry) => ({
+    entryId: entry.id,
+    foodId: entry.foodId,
+    amount: String(entry.amount),
+    unit: entry.unit,
+    name: entry.name,
+  }));
+  draft.meal = meal;
+  draft.category = "";
+  draft.foodId = "";
+  draft.amount = "";
+  draft.unit = "";
+  draft.foodQuery = "";
   notice = "";
   view = "add";
   render();
@@ -451,11 +481,13 @@ function plateBlock() {
   if (!plate.length) return "";
   const rows = plate.map((line, index) => {
     const food = currentFoods().find((item) => item.id === line.foodId);
-    const scaled = food ? scaleFood(food, line.amount, line.unit) : null;
+    const name = food?.name || line.name || "Food";
+    const portion = linePortion(line);
     return `
       <div class="entry">
-        <div><b>${esc(food?.name || "Food")}</b>
-          <div class="hint">${esc(loggedAmount(line))}${scaled ? ` · ${kcal(scaled.kcal)} kcal` : ""}</div>
+        <div class="plate-line"><b>${esc(name)}</b>
+          <div class="amount"><input id="plate-amount-${index}" data-plate-amount="${index}" inputmode="decimal" value="${esc(line.amount)}" aria-label="Amount of ${esc(name)}"><span class="unit">${esc(unitWord(line.unit))}</span></div>
+          <div class="hint">${portion ? `${kcal(portion.kcal)} kcal · ${fmt(portion.protein)} g protein` : "Amount is empty"}</div>
         </div>
         <button type="button" class="x" data-plate="${index}" aria-label="Remove">×</button>
       </div>`;
@@ -464,7 +496,7 @@ function plateBlock() {
 }
 
 function addView() {
-  const editing = entryBeingEdited();
+  const editing = !!editingMeal;
   const food = selectedFood();
   const unit = selectedUnit();
   const cats = categories();
@@ -472,10 +504,11 @@ function addView() {
   const canGrams = food && food.servingGrams;
   const portion = portionForDraft();
   const matches = foodMatches();
+  const countLabel = `${plate.length} ${plate.length === 1 ? "food" : "foods"}`;
   return `
-    <div class="top"><div><h1>${editing ? "Edit" : "Add"}</h1><p class="sub">${esc(formatDate(date))} · ${editing ? `Editing ${esc(editing.name)}` : esc(personName())}</p></div></div>
+    <div class="top"><div><h1>${editing ? "Edit" : "Add"}</h1><p class="sub">${esc(formatDate(date))} · ${editing ? `Editing ${esc(draft.meal)} · ${countLabel}` : esc(personName())}</p></div></div>
     <div class="field"><div class="label">Meal</div><div class="segs">${MEALS.map((m) => `<button type="button" class="seg ${draft.meal === m ? "on" : ""}" data-meal="${esc(m)}">${esc(m)}</button>`).join("")}</div></div>
-    ${editing ? "" : plateBlock()}
+    ${plateBlock()}
     <div class="field"><label class="label" for="food-query">Search</label>
       <input class="textin" id="food-query" value="${esc(draft.foodQuery || "")}" placeholder="Search your dishes" autocomplete="off">
     </div>
@@ -492,7 +525,8 @@ function addView() {
       ${food?.unit === "count" && canGrams ? `<button type="button" class="textbtn" id="unit-toggle">Use ${unit === "count" ? "grams" : "count"} instead</button>` : ""}
     </div>
     <div class="card" id="portion">${portionHTML(portion)}</div>
-    ${editing ? `<button class="btn" type="button" id="save-entry">Save changes</button>` : `<button class="btn secondary" type="button" id="add-another">Add another food</button><button class="btn" type="button" id="save-entry">Add to today</button>`}
+    <button class="btn secondary" type="button" id="add-another">Add another food</button>
+    <button class="btn" type="button" id="save-entry">${editing ? "Save changes" : "Add to today"}</button>
     <button class="centerlink textbtn" type="button" data-nav="search">Food not in the list</button>
     ${editing ? `<button class="centerlink textbtn" type="button" id="cancel-edit">Cancel</button>` : supplementBlock()}`;
 }
@@ -656,7 +690,7 @@ function searchView() {
 
 function microEditor(form) {
   const input = (key, label, unit) => `
-    <div class="field"><label class="label">${esc(label)} (${esc(unit)})</label>
+    <div class="field"><label class="label named">${esc(label)} (${esc(String(unit).toUpperCase())})</label>
       <input class="mini" id="nf-micro-${key}" inputmode="decimal" value="${esc(form.micros?.[key] ?? "")}" placeholder="blank if unknown">
     </div>`;
   return `
@@ -731,7 +765,7 @@ function editFoodCard() {
 function goalsView() {
   const g = goals();
   const nutrient = (list, bag) => list.map(([key, label, unit]) => `
-    <div class="field"><label class="label">${label} minimum (${unit})</label>
+    <div class="field"><label class="label named">${esc(label)} (${esc(String(unit).toUpperCase())}) minimum</label>
       <input class="mini" data-min="${key}" data-bag="${bag}" inputmode="decimal" value="${esc(g[bag][key])}">
     </div>`).join("");
   return `
@@ -981,67 +1015,71 @@ function entryFromLine(food, amount, unit) {
   };
 }
 
-async function addEntry() {
-  const editing = entryBeingEdited();
-  const food = selectedFood();
-  const amount = Number(draft.amount);
-  const unit = selectedUnit();
-  if (editing) {
-    if (!(amount > 0) || (!food && !editing)) {
-      notice = "Choose a food and an amount.";
-      render();
-      return;
-    }
-    const scaled = !food || (food.id === editing.foodId && unit === editing.unit)
-      ? scaleSnapshot(editing, amount)
-      : scaleFood(food, amount, unit);
-    const entry = {
-      id: editing.id,
-      person, date, meal: draft.meal,
-      foodId: food ? food.id : editing.foodId,
-      name: food ? food.name : editing.name,
-      amount, unit, ...scaled,
-    };
-    const index = state.entries.findIndex((item) => item.id === editing.id);
-    state.entries[index] = entry;
-    persist();
-    await cloud(() => pushEntry(entry));
-    draft.amount = "";
-    editingEntryId = "";
-    notice = "";
-    view = "today";
-    render();
-    return;
-  }
-  const lines = plate.map((line) => ({ ...line }));
-  if (food && amount > 0) lines.push({ foodId: food.id, amount, unit });
-  if (!lines.length) {
-    notice = "Choose a food and an amount.";
-    render();
-    return;
-  }
-  const entries = [];
-  for (const line of lines) {
-    const item = currentFoods().find((candidate) => candidate.id === line.foodId);
-    if (!item) continue;
-    entries.push(entryFromLine(item, line.amount, line.unit));
-  }
-  if (!entries.length) {
-    notice = "Choose a food and an amount.";
-    render();
-    return;
-  }
-  state.entries.push(...entries);
-  persist();
-  for (const entry of entries) await cloud(() => pushEntry(entry));
+function finishEntrySave() {
   plate = [];
   draft.amount = "";
   draft.foodId = "";
   draft.foodQuery = "";
-  editingEntryId = "";
+  editingMeal = "";
+  supplementChecks = null;
   notice = "";
   view = "today";
   render();
+}
+
+async function addEntry() {
+  const lines = plate.map((line) => ({ ...line }));
+  const food = selectedFood();
+  const typed = Number(draft.amount);
+  if (food && typed > 0) lines.push({ foodId: food.id, amount: typed, unit: selectedUnit(), name: food.name });
+  const usable = lines.filter((line) => Number(line.amount) > 0);
+  if (!usable.length && !editingMeal) {
+    notice = "Choose a food and an amount.";
+    render();
+    return;
+  }
+  const keptIds = new Set();
+  const written = [];
+  for (const line of usable) {
+    const existing = line.entryId ? state.entries.find((entry) => entry.id === line.entryId) : null;
+    const source = currentFoods().find((item) => item.id === line.foodId);
+    const same = existing && existing.foodId === line.foodId && existing.unit === line.unit && Number(existing.amount) > 0;
+    if (!same && !source) continue;
+    const useUnit = same ? existing.unit : (line.unit || source.unit);
+    const scaled = same ? scaleSnapshot(existing, line.amount) : scaleFood(source, line.amount, useUnit);
+    const entry = {
+      ...(existing || {}),
+      id: existing ? existing.id : crypto.randomUUID(),
+      person,
+      date,
+      meal: draft.meal,
+      foodId: same ? existing.foodId : source.id,
+      name: same ? existing.name : source.name,
+      amount: Number(line.amount),
+      unit: useUnit,
+      ...scaled,
+    };
+    const index = state.entries.findIndex((item) => item.id === entry.id);
+    if (index >= 0) state.entries[index] = entry;
+    else state.entries.push(entry);
+    keptIds.add(entry.id);
+    written.push(entry);
+  }
+  const removed = editingMeal
+    ? state.entries
+      .filter((entry) => entry.person === person && entry.date === date && entry.meal === editingMeal && !keptIds.has(entry.id))
+      .map((entry) => entry.id)
+    : [];
+  if (!written.length && !removed.length) {
+    notice = "Choose a food and an amount.";
+    render();
+    return;
+  }
+  if (removed.length) state.entries = state.entries.filter((entry) => !removed.includes(entry.id));
+  persist();
+  for (const entry of written) await cloud(() => pushEntry(entry));
+  for (const id of removed) await cloud(() => removeEntryRemote(id));
+  finishEntrySave();
 }
 
 function addAnother() {
@@ -1052,7 +1090,7 @@ function addAnother() {
     render();
     return;
   }
-  plate.push({ foodId: food.id, amount, unit: selectedUnit() });
+  plate.push({ foodId: food.id, amount: draft.amount, unit: selectedUnit(), name: food.name });
   draft.foodId = "";
   draft.amount = "";
   draft.foodQuery = "";
@@ -1298,7 +1336,11 @@ function onClick(e) {
   const navBtn = e.target.closest("[data-nav]");
   if (navBtn) {
     const next = navBtn.dataset.nav;
-    if (!(next === "add" && editingEntryId && view === "add")) editingEntryId = "";
+    const keepPlate = next === "search" || (next === "add" && (view === "add" || view === "search"));
+    if (!keepPlate) {
+      editingMeal = "";
+      plate = [];
+    }
     if (next === "search") {
       searchReturn = view === "foods" ? "foods" : "add";
       lookup = { q: "", saved: [], found: [], status: "", form: null };
@@ -1376,8 +1418,8 @@ function onClick(e) {
   }
   const del = e.target.closest("[data-del]");
   if (del) { deleteEntry(del.dataset.del); return; }
-  const entryBtn = e.target.closest("[data-entry]");
-  if (entryBtn) { beginEditEntry(entryBtn.dataset.entry); return; }
+  const mealEdit = e.target.closest("[data-meal-edit]");
+  if (mealEdit) { beginEditMeal(mealEdit.dataset.mealEdit); return; }
   const jump = e.target.closest("[data-date]");
   if (jump) { date = jump.dataset.date; view = "today"; render(); return; }
   const edit = e.target.closest("[data-edit]");
@@ -1440,8 +1482,11 @@ function onClick(e) {
   if (e.target.id === "save-food") { captureFoodForm(); saveNewFood(); return; }
   if (e.target.id === "update-food") { captureFoodForm(); updateFood(); return; }
   if (e.target.id === "cancel-edit") {
-    editingEntryId = "";
+    editingMeal = "";
+    plate = [];
     draft.amount = "";
+    draft.foodId = "";
+    draft.foodQuery = "";
     view = "today";
     render();
     return;
@@ -1488,6 +1533,7 @@ function onChange(e) {
     logTo = "";
     addingExercise = false;
     plate = [];
+    editingMeal = "";
     supplementChecks = null;
     draft.foodQuery = "";
     render();
@@ -1560,6 +1606,13 @@ function onChange(e) {
 }
 
 function onInput(e) {
+  const plateAmount = e.target.closest("[data-plate-amount]");
+  if (plateAmount) {
+    const index = Number(plateAmount.dataset.plateAmount);
+    if (plate[index]) plate[index].amount = e.target.value;
+    render();
+    return;
+  }
   if (e.target.id === "amount") {
     draft.amount = e.target.value;
     const box = document.getElementById("portion");

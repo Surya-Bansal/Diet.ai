@@ -107,6 +107,12 @@ tr:last-child td { border-bottom: 0; }
 .seg.on { background: #3a2c1e; color: var(--copper); border-color: #6a4c30; }
 .field { margin-top: 12px; }
 .field .label { display: block; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
+.label.named { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.meal + .meal { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.meal-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.meal-head b { font-size: 15px; }
+.plate-line { flex: 1; min-width: 0; }
+.plate-line .amount { margin-top: 6px; min-height: 40px; }
 .select, .textin, .amount {
   width: 100%; min-height: 46px; border-radius: 12px; padding: 0 12px; background: var(--inset);
 }
