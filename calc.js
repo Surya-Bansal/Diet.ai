@@ -113,6 +113,7 @@ export function fromLabelTotals(src) {
   const sugarKnown = src.sugar !== null && src.sugar !== undefined && src.sugar !== "";
   const sugar = sugarKnown ? Number(src.sugar) || 0 : 0;
   const carb = Number(src.carb) || 0;
+  const cholesterolKnown = src.cholesterol !== null && src.cholesterol !== undefined && src.cholesterol !== "";
   return {
     kcal: round1(src.kcal),
     protein: round1(src.protein),
@@ -123,6 +124,8 @@ export function fromLabelTotals(src) {
     sugar: round1(sugar),
     fiber: round1(fiber),
     sugarKnown,
+    cholesterol: cholesterolKnown ? round1(src.cholesterol) : null,
+    cholesterolKnown,
   };
 }
 
@@ -143,6 +146,7 @@ export function scaleFood(food, amount, unit) {
   const basis = referenceAmount(food, use);
   const factor = basis ? Number(amount) / basis : 0;
   const n = (v) => round1((Number(v) || 0) * factor);
+  const cholesterolKnown = food.cholesterolKnown !== false && food.cholesterol != null && food.cholesterol !== "";
   const micros = {};
   for (const [k, v] of Object.entries(food.micros || {})) {
     if (v === null || v === undefined || v === "") continue;
@@ -159,6 +163,8 @@ export function scaleFood(food, amount, unit) {
     sugar: n(food.sugar),
     fiber: n(food.fiber),
     sugarKnown: food.sugarKnown !== false,
+    cholesterol: cholesterolKnown ? n(food.cholesterol) : null,
+    cholesterolKnown,
     micros,
     factor,
   };
@@ -308,5 +314,13 @@ export function selfTest(foods) {
     unit: "g", servingGrams: 300, perAmount: 300, source: "Approximate, per 100 g.", micros: {},
   }, 150, "g");
   check("rescaled serving is the basis", Math.abs(matched.kcal - 145.5) < 0.2, matched.kcal);
+  const labeled = fromLabelTotals({ kcal: 100, protein: 0, fat: 10, sat: 5, carb: 30, sugar: 8, fiber: 4, cholesterol: 30 });
+  check("label fat remainder", labeled.fatUnsat === 5 && labeled.fatSat === 5, labeled.fatUnsat);
+  check("label carb remainder", labeled.carbOther === 18, labeled.carbOther);
+  check("cholesterol stored in mg", labeled.cholesterol === 30 && labeled.cholesterolKnown === true, labeled.cholesterol);
+  const noChol = fromLabelTotals({ kcal: 1, protein: 0, fat: 1, sat: "", carb: 1, sugar: 0, fiber: 0, cholesterol: "" });
+  check("blank cholesterol stays unknown", noChol.cholesterolKnown === false && noChol.cholesterol == null);
+  const half = scaleFood({ ...labeled, unit: "g", servingGrams: 100, micros: {} }, 50, "g");
+  check("cholesterol scales with the portion", half.cholesterol === 15, half.cholesterol);
   return lines;
 }

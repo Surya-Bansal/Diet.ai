@@ -356,6 +356,7 @@ function scaleSnapshot(entry, amount) {
   const n = (v) => round1((Number(v) || 0) * ratio);
   const micros = {};
   for (const [k, v] of Object.entries(entry.micros || {})) micros[k] = n(v);
+  const cholesterolKnown = entry.cholesterolKnown !== false && entry.cholesterol != null && entry.cholesterol !== "";
   return {
     kcal: n(entry.kcal),
     protein: n(entry.protein),
@@ -366,6 +367,8 @@ function scaleSnapshot(entry, amount) {
     sugar: n(entry.sugar),
     fiber: n(entry.fiber),
     sugarKnown: entry.sugarKnown !== false,
+    cholesterol: cholesterolKnown ? n(entry.cholesterol) : null,
+    cholesterolKnown,
     micros,
   };
 }
@@ -542,6 +545,7 @@ function portionHTML(portion) {
       <div><b>${fmt(carbTotal(portion))} g</b><span>carbohydrate</span></div>
       <div><b>${fmt(portion.sugar)} g</b><span>sugar</span></div>
       <div><b>${fmt(portion.fiber)} g</b><span>fiber</span></div>
+      ${portion.cholesterolKnown ? `<div><b>${fmt(portion.cholesterol)} mg</b><span>cholesterol</span></div>` : ""}
     </div>`;
 }
 
@@ -634,6 +638,7 @@ function formFromFood(food) {
     carb: carbTotal(food),
     sugar: food.sugar,
     fiber: food.fiber,
+    cholesterol: food.cholesterolKnown && food.cholesterol != null ? food.cholesterol : "",
     source: food.source,
     serving: unit === "count" ? (food.servingCount || 1) : (food.servingGrams ?? ""),
     servingUnit: unit,
@@ -658,6 +663,7 @@ function formFromSearch(food) {
     carb: carbTotal(food),
     sugar: food.sugar,
     fiber: food.fiber,
+    cholesterol: food.cholesterolKnown && food.cholesterol != null ? food.cholesterol : "",
     source: food.source,
     serving: "100",
     servingUnit: "g",
@@ -727,8 +733,9 @@ function confirmForm(heading = "Confirm this serving", buttonId = "save-food", b
         <div class="field"><label class="label">Total carbohydrate</label><input class="mini" id="nf-carb" inputmode="decimal" value="${esc(f.carb)}"></div>
         <div class="field"><label class="label">Sugar</label><input class="mini" id="nf-sugar" inputmode="decimal" value="${esc(f.sugar)}"></div>
         <div class="field"><label class="label">Fiber</label><input class="mini" id="nf-fiber" inputmode="decimal" value="${esc(f.fiber)}"></div>
+        <div class="field"><label class="label">Cholesterol (mg)</label><input class="mini" id="nf-cholesterol" inputmode="decimal" value="${esc(f.cholesterol ?? "")}" placeholder="blank if unknown"></div>
       </div>
-      <p class="hint">${esc(f.source || "")} Other carbs and unsaturated fat are what's left after sugar, fiber, and saturated fat.</p>
+      <p class="hint">${esc(f.source || "")} Type the label totals. Saturated fat is subtracted from total fat, and sugar and fiber are subtracted from carbohydrate. Cholesterol is stored as written.</p>
       ${f.showMicros ? microEditor(f) : `<button class="textbtn" type="button" id="show-micros">Vitamins & Minerals</button>`}
       <button class="btn" type="button" id="${buttonId}">${esc(buttonLabel)}</button>
     </div>`;
@@ -821,6 +828,7 @@ function captureFoodForm() {
     carb: document.getElementById("nf-carb")?.value ?? "",
     sugar: document.getElementById("nf-sugar")?.value ?? "",
     fiber: document.getElementById("nf-fiber")?.value ?? "",
+    cholesterol: document.getElementById("nf-cholesterol")?.value ?? "",
     serving: document.getElementById("nf-serving")?.value ?? "",
     servingUnit: document.getElementById("nf-unit")?.value || "g",
   };
@@ -884,7 +892,7 @@ function applyServingResize() {
     return;
   }
   const factor = next / prev;
-  for (const key of ["kcal", "protein", "fat", "sat", "carb", "sugar", "fiber"]) {
+  for (const key of ["kcal", "protein", "fat", "sat", "carb", "sugar", "fiber", "cholesterol"]) {
     form[key] = scaleFormValue(form[key], factor);
   }
   if (form.micros) {
@@ -912,6 +920,7 @@ function readForm() {
     carb: f.carb,
     sugar: f.sugar,
     fiber: f.fiber,
+    cholesterol: f.cholesterol,
     serving: f.serving,
     servingUnit: f.servingUnit || "g",
     source: f.source || "Typed from a label",
@@ -1464,7 +1473,7 @@ function onClick(e) {
     skipCapture = true;
     lookup.form = {
       name: lookup.q, category: "", newCategory: false, newCategoryName: "",
-      kcal: "", protein: "", fat: "", sat: "", carb: "", sugar: "", fiber: "",
+      kcal: "", protein: "", fat: "", sat: "", carb: "", sugar: "", fiber: "", cholesterol: "",
       source: "Typed from a label", serving: "100", servingUnit: "g", numberBasis: 100,
       micros: blankMicros(), showMicros: false,
     };
