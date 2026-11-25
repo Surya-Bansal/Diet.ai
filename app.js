@@ -65,6 +65,7 @@ function goals() {
     vitamins: { ...base.vitamins, ...(saved.vitamins || {}) },
     minerals: { ...base.minerals, ...(saved.minerals || {}) },
     supplements: Array.isArray(saved.supplements) ? saved.supplements : [],
+    exercises: Array.isArray(saved.exercises) ? saved.exercises : [...(base.exercises || [])],
   };
 }
 
@@ -72,12 +73,10 @@ function dayEntries() {
   return state.entries.filter((e) => e.person === person && e.date === date);
 }
 
-const EXERCISE_SETS = ["Push", "Pull, Legs & Abs", "Hiking"];
 const KCAL_PER_STEP = 0.024;
 // Net kcal per minute above rest at 63.5 kg. Strength is 5.0 MET, hiking is 6.0 MET.
 const KCAL_PER_MIN = 4.4;
 const HIKE_KCAL_PER_MIN = 5.6;
-let addingExercise = false;
 
 function kcalPerMinute(exercise) {
   const name = String(exercise || "").trim().toLowerCase();
@@ -95,13 +94,15 @@ function dayMeta() {
   return state.days.find((d) => d.person === person && d.date === date) || { exercise: "", burned: 0, steps: 0, minutes: 0 };
 }
 
-function exerciseNames() {
-  const names = [...EXERCISE_SETS];
-  for (const day of state.days) {
-    if (day.person !== person || !day.exercise || names.includes(day.exercise)) continue;
-    names.push(day.exercise);
-  }
-  return names;
+function exerciseSets() {
+  return (goals().exercises || []).map((name) => String(name).trim()).filter(Boolean);
+}
+
+function writeExercises(list) {
+  const next = { ...goals(), exercises: list };
+  state.goals[person] = next;
+  persist();
+  cloud(() => pushGoals(person, next));
 }
 
 function persist() {
@@ -549,23 +550,37 @@ function portionHTML(portion) {
     </div>`;
 }
 
+function exerciseEditor() {
+  const rows = exerciseSets().map((name, index) => `
+    <div class="exercise-row">
+      <input class="textin" data-exercise-name="${index}" value="${esc(name)}" aria-label="Exercise set ${index + 1}">
+      <button type="button" class="textbtn" data-exercise-remove="${index}">Remove</button>
+    </div>`).join("");
+  return `
+    <h2>Exercise sets</h2>
+    <p class="hint">These are the choices on Record. A name containing "hik" uses the hiking calorie rate. Any other name uses the gym rate.</p>
+    <div class="card">${rows || `<p class="hint">None yet.</p>`}
+      <div class="field"><label class="label" for="exercise-add-name">Add</label><input class="textin" id="exercise-add-name" placeholder="Legs"></div>
+      <button class="btn secondary" type="button" id="exercise-add">Add exercise</button>
+    </div>`;
+}
+
 function exerciseBlock(meta) {
-  const names = exerciseNames();
+  const names = exerciseSets();
   const selected = meta.exercise || "";
-  const options = names.map((name) => `<option value="${esc(name)}" ${!addingExercise && name === selected ? "selected" : ""}>${esc(name)}</option>`).join("");
-  const typed = addingExercise && selected && !EXERCISE_SETS.includes(selected) ? selected : "";
+  const options = names.map((name) => `<option value="${esc(name)}" ${name === selected ? "selected" : ""}>${esc(name)}</option>`).join("");
+  const extra = selected && !names.includes(selected) ? `<option value="${esc(selected)}" selected>${esc(selected)}</option>` : "";
   return `
     <div class="field">
       <label class="label" for="exercise">Exercise set</label>
       <div class="pair">
         <select class="select" id="exercise">
-          <option value="" ${!selected && !addingExercise ? "selected" : ""}>Choose</option>
+          <option value="" ${selected ? "" : "selected"}>Choose</option>
           ${options}
-          <option value="__new__" ${addingExercise ? "selected" : ""}>New exercise</option>
+          ${extra}
         </select>
         <input class="textin" id="minutes" inputmode="numeric" value="${meta.minutes || ""}" placeholder="Minutes" aria-label="Exercise minutes">
       </div>
-      ${addingExercise ? `<input class="textin" id="exercise-new" style="margin-top:8px" value="${esc(typed)}" placeholder="New exercise">` : ""}
     </div>
     <div class="field"><label class="label" for="steps">Steps</label><input class="textin" id="steps" inputmode="numeric" value="${meta.steps || ""}" placeholder="0"></div>
     <div class="field"><label class="label" for="burned">Calories</label><input class="textin" id="burned" inputmode="decimal" value="${meta.burned || ""}" placeholder="0">
@@ -786,6 +801,7 @@ function goalsView() {
       ${goalInput("carbMax", "Carbohydrate maximum", g.carbMax)}
       ${goalInput("sugarMax", "Sugar maximum", g.sugarMax)}
     </div>
+    ${exerciseEditor()}
     <p class="hint">A vitamin or mineral counts when today's foods clear the minimum. Empty cells on a food do not count.</p>
     <details><summary>Vitamin minimums (${VITAMINS.length})</summary>${nutrient(VITAMINS, "vitamins")}</details>
     <details><summary>Mineral minimums (${MINERALS.length})</summary>${nutrient(MINERALS, "minerals")}</details>
@@ -1183,9 +1199,27 @@ async function repairEntryUnits() {
 }
 
 function readExerciseName() {
-  const picked = document.getElementById("exercise")?.value ?? "";
-  if (picked === "__new__") return document.getElementById("exercise-new")?.value.trim() ?? "";
-  return picked;
+  return document.getElementById("exercise")?.value ?? "";
+}
+
+function renameExercise(index, raw) {
+  const list = exerciseSets();
+  const previous = list[index];
+  const name = String(raw || "").trim();
+  if (!previous || !name || name === previous) return;
+  if (list.some((item, itemIndex) => itemIndex !== index && item === name)) return;
+  list[index] = name;
+  writeExercises(list);
+  const changed = [];
+  state.days = state.days.map((day) => {
+    if (day.person !== person || day.exercise !== previous) return day;
+    const updated = { ...day, exercise: name };
+    changed.push(updated);
+    return updated;
+  });
+  if (!changed.length) return;
+  persist();
+  for (const day of changed) cloud(() => pushDay(day));
 }
 
 function matchesCalorieGuess(burnedText, guess) {
@@ -1418,6 +1452,21 @@ function onClick(e) {
     render();
     return;
   }
+  if (e.target.id === "exercise-add") {
+    const name = document.getElementById("exercise-add-name")?.value.trim() || "";
+    const list = exerciseSets();
+    if (name && !list.includes(name)) writeExercises([...list, name]);
+    notice = "";
+    render();
+    return;
+  }
+  const exerciseRemove = e.target.closest("[data-exercise-remove]");
+  if (exerciseRemove) {
+    const index = Number(exerciseRemove.dataset.exerciseRemove);
+    writeExercises(exerciseSets().filter((_, itemIndex) => itemIndex !== index));
+    render();
+    return;
+  }
   const suppRemove = e.target.closest("[data-supp-remove]");
   if (suppRemove) {
     writeSupplements((goals().supplements || []).filter((item) => item.foodId !== suppRemove.dataset.suppRemove));
@@ -1540,7 +1589,6 @@ function onChange(e) {
     }
     logFrom = "";
     logTo = "";
-    addingExercise = false;
     plate = [];
     editingMeal = "";
     supplementChecks = null;
@@ -1548,7 +1596,7 @@ function onChange(e) {
     render();
     return;
   }
-  if (e.target.id === "date") { date = e.target.value || todayISO(); addingExercise = false; supplementChecks = null; render(); return; }
+  if (e.target.id === "date") { date = e.target.value || todayISO(); supplementChecks = null; render(); return; }
   if (e.target.id === "nf-serving") {
     applyServingResize();
     skipCapture = true;
@@ -1564,8 +1612,13 @@ function onChange(e) {
     return;
   }
   if (e.target.id === "exercise") {
-    addingExercise = e.target.value === "__new__";
-    if (!addingExercise) saveDayFromInputs("activity");
+    saveDayFromInputs("activity");
+    render();
+    return;
+  }
+  const exerciseName = e.target.closest("[data-exercise-name]");
+  if (exerciseName) {
+    renameExercise(Number(exerciseName.dataset.exerciseName), exerciseName.value);
     render();
     return;
   }
@@ -1633,7 +1686,7 @@ function onInput(e) {
     render();
     return;
   }
-  if (e.target.id === "exercise-new" || e.target.id === "minutes" || e.target.id === "steps") { saveDayFromInputs("activity"); return; }
+  if (e.target.id === "minutes" || e.target.id === "steps") { saveDayFromInputs("activity"); return; }
   if (e.target.id === "burned") { saveDayFromInputs(); return; }
   if (e.target.id === "food-filter") {
     draft.foodFilter = e.target.value;

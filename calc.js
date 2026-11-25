@@ -94,10 +94,11 @@ export function defaultGoals() {
     minerals: { ...MINERAL_MIN },
     supplements: [],
   };
+  const exercises = () => ["Push", "Pull, Legs & Abs", "Hiking"];
   return {
-    surya: { ...base, kcal: 2050, protein: 130, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN } },
-    sahi: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN } },
-    nonu: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN } },
+    surya: { ...base, kcal: 2050, protein: 130, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
+    sahi: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
+    nonu: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
   };
 }
 
@@ -322,5 +323,10 @@ export function selfTest(foods) {
   check("blank cholesterol stays unknown", noChol.cholesterolKnown === false && noChol.cholesterol == null);
   const half = scaleFood({ ...labeled, unit: "g", servingGrams: 100, micros: {} }, 50, "g");
   check("cholesterol scales with the portion", half.cholesterol === 15, half.cholesterol);
+  const firstGoals = defaultGoals();
+  firstGoals.surya.exercises.push("Extra");
+  const freshGoals = defaultGoals();
+  check("exercise sets start as three", freshGoals.surya.exercises.join("|") === "Push|Pull, Legs & Abs|Hiking");
+  check("exercise lists stay separate", freshGoals.sahi.exercises.length === 3 && freshGoals.nonu.exercises.length === 3);
   return lines;
 }
