@@ -181,7 +181,7 @@ export function carbTotal(row) {
 
 export function sumEntries(entries) {
   const totals = {
-    kcal: 0, protein: 0, fatUnsat: 0, fatSat: 0, fatUnsplit: 0,
+    kcal: 0, protein: 0, fatUnsat: 0, fatSat: 0,
     carbOther: 0, sugar: 0, fiber: 0, micros: {},
   };
   for (const e of entries) {
@@ -190,11 +190,8 @@ export function sumEntries(entries) {
     totals.carbOther += Number(e.carbOther) || 0;
     totals.sugar += Number(e.sugar) || 0;
     totals.fiber += Number(e.fiber) || 0;
-    if (e.fatSplit === false) totals.fatUnsplit += fatTotal(e);
-    else {
-      totals.fatUnsat += Number(e.fatUnsat) || 0;
-      totals.fatSat += Number(e.fatSat) || 0;
-    }
+    totals.fatUnsat += Number(e.fatUnsat) || 0;
+    totals.fatSat += Number(e.fatSat) || 0;
     for (const [k, v] of Object.entries(e.micros || {})) {
       const key = canonMicro(k);
       totals.micros[key] = (totals.micros[key] || 0) + (Number(v) || 0);
@@ -204,7 +201,7 @@ export function sumEntries(entries) {
     if (k === "micros") continue;
     totals[k] = round1(totals[k]);
   }
-  totals.fat = round1(totals.fatUnsat + totals.fatSat + totals.fatUnsplit);
+  totals.fat = round1(totals.fatUnsat + totals.fatSat);
   totals.carb = round1(totals.carbOther + totals.sugar + totals.fiber);
   return totals;
 }
@@ -287,6 +284,8 @@ export function selfTest(foods) {
     { ...plate, micros: {} },
   ]);
   check("day fat adds", Math.abs(totals.fat - (14.4 + 15.4)) < 0.2, totals.fat);
+  check("unknown sat counts as unsaturated", Math.abs(totals.fatUnsat - (c.fatUnsat + plate.fatUnsat)) < 0.2, totals.fatUnsat);
+  check("day has no unsplit fat", totals.fatUnsplit == null);
   check("day carbs add", Math.abs(totals.carb - carbTotal(plate)) < 0.2, totals.carb);
   const greens = scaleFood(foods.find((f) => f.name.includes("Greens")), 1, "count");
   const gday = sumEntries([greens]);

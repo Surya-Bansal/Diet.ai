@@ -417,9 +417,7 @@ function beginEditMeal(meal) {
 }
 
 function fatNote(t) {
-  const known = `${fmt(t.fatUnsat)} g unsaturated · ${fmt(t.fatSat)} g saturated`;
-  if (t.fatUnsplit > 0) return `${known} · ${fmt(t.fatUnsplit)} g without a split`;
-  return known;
+  return `${fmt(t.fatUnsat)} g unsaturated · ${fmt(t.fatSat)} g saturated`;
 }
 
 function entriesByDate() {
@@ -1306,7 +1304,7 @@ function download(filename, text, type) {
 }
 
 function downloadLog(from, to) {
-  const header = ["Date", "Exercise", "Steps", "Cal_burned", "Calories", "Protein", "Fat_unsat", "Fat_sat", "Fat_unsplit", "Carb_other", "Sugar", "Fibre", "Fat", "Carbohydrate", "Vitamins", "Minerals", "Foods"];
+  const header = ["Date", "Exercise", "Steps", "Cal_burned", "Calories", "Protein", "Fat_unsat", "Fat_sat", "Carb_other", "Sugar", "Fibre", "Fat", "Carbohydrate", "Vitamins", "Minerals", "Foods"];
   const lines = [header.join(",")];
   const keys = new Set(state.entries.filter((e) => e.person === person).map((e) => e.date));
   for (const day of state.days) if (day.person === person) keys.add(day.date);
@@ -1318,7 +1316,7 @@ function downloadLog(from, to) {
     const meta = state.days.find((d) => d.person === person && d.date === when) || {};
     const cells = [
       when, meta.exercise || "", meta.steps || 0, meta.burned || 0, round1(totals.kcal), totals.protein,
-      totals.fatUnsat, totals.fatSat, totals.fatUnsplit, totals.carbOther, totals.sugar, totals.fiber,
+      totals.fatUnsat, totals.fatSat, totals.carbOther, totals.sugar, totals.fiber,
       totals.fat, totals.carb,
       `${hitCount(totals, VITAMINS.map(([k]) => k), g.vitamins)}/${VITAMINS.length}`,
       `${hitCount(totals, MINERALS.map(([k]) => k), g.minerals)}/${MINERALS.length}`,
