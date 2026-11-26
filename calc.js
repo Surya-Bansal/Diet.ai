@@ -93,10 +93,11 @@ export function defaultGoals() {
     vitamins: { ...VITAMIN_MIN },
     minerals: { ...MINERAL_MIN },
     supplements: [],
+    restingBurn: 0,
   };
   const exercises = () => ["Push", "Pull, Legs & Abs", "Hiking"];
   return {
-    surya: { ...base, kcal: 2050, protein: 130, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
+    surya: { ...base, kcal: 2050, protein: 130, restingBurn: 1500, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
     sahi: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
     nonu: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
   };
@@ -250,6 +251,42 @@ export function mealGroups(entries) {
   return order.map((meal) => ({ meal, entries: map.get(meal), totals: sumEntries(map.get(meal)) }));
 }
 
+export function chartBurn(activity, resting) {
+  return round1((Number(activity) || 0) + (Number(resting) || 0));
+}
+
+export function datesBetween(from, to) {
+  if (!from || !to || from > to) return [];
+  const out = [];
+  const [y, m, d] = from.split("-").map(Number);
+  const cursor = new Date(y, m - 1, d);
+  while (todayISO(cursor) <= to) {
+    out.push(todayISO(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return out;
+}
+
+export function logChartDates(loggedAsc, { custom = false, from = "", to = "", count = 7 } = {}) {
+  const logged = (loggedAsc || []).filter(Boolean);
+  if (!logged.length) return [];
+  if (!custom) {
+    const last = logged.slice(-count);
+    return datesBetween(last[0], last[last.length - 1]);
+  }
+  return datesBetween(from, to);
+}
+
+export function onGoal(kind, totals, goals) {
+  const value = Number(totals?.[kind === "carb" ? "carb" : kind === "fat" ? "fat" : kind === "protein" ? "protein" : kind === "sugar" ? "sugar" : "kcal"]) || 0;
+  if (kind === "kcal") return value <= Number(goals.kcal);
+  if (kind === "protein") return value >= Number(goals.protein);
+  if (kind === "fat") return value <= Number(goals.fatMax);
+  if (kind === "sugar") return value < Number(goals.sugarMax);
+  if (kind === "carb") return value <= Number(goals.carbMax);
+  return false;
+}
+
 export function todayISO(d = new Date()) {
   const z = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
@@ -345,5 +382,14 @@ export function selfTest(foods) {
     { meal: "Breakfast", name: "second" },
   ]).map((entry) => `${entry.meal}:${entry.name}`);
   check("meals stay in breakfast to protocol order", ordered.join("|") === "Breakfast:first|Breakfast:second|Lunch:later|Snack:mid", ordered.join("|"));
+  check("surya resting burn is 1500", defaultGoals().surya.restingBurn === 1500 && defaultGoals().sahi.restingBurn === 0);
+  check("chart burn adds rest", chartBurn(420, 1500) === 1920, chartBurn(420, 1500));
+  const logged = ["2026-11-01", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-08", "2026-11-09", "2026-11-10"];
+  check("chart defaults to the last 7 logged days", logChartDates(logged).join(",") === "2026-11-03,2026-11-04,2026-11-05,2026-11-06,2026-11-07,2026-11-08,2026-11-09,2026-11-10");
+  check("custom chart range keeps gaps", logChartDates(logged, { custom: true, from: "2026-11-01", to: "2026-11-04" }).join(",") === "2026-11-01,2026-11-02,2026-11-03,2026-11-04");
+  const suryaGoals = defaultGoals().surya;
+  check("calorie goal is a ceiling", onGoal("kcal", { kcal: 2050 }, suryaGoals) && !onGoal("kcal", { kcal: 2051 }, suryaGoals));
+  check("protein goal is a minimum", onGoal("protein", { protein: 130 }, suryaGoals) && !onGoal("protein", { protein: 129 }, suryaGoals));
+  check("sugar goal is strict", !onGoal("sugar", { sugar: 36 }, suryaGoals) && onGoal("sugar", { sugar: 35 }, suryaGoals));
   return lines;
 }

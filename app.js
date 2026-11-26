@@ -2,6 +2,7 @@ import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
   scaleFood, sumEntries, hitCount, foodsText, mealGroups, orderedEntries, microValue, referenceAmount,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
+  chartBurn, logChartDates, onGoal,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
 import {
@@ -35,6 +36,7 @@ let editingId = "";
 let editingMeal = "";
 let logFrom = "";
 let logTo = "";
+let logRangeCustom = false;
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -424,6 +426,191 @@ function entriesByDate() {
   return byDate;
 }
 
+function activityBurn(iso) {
+  const row = state.days.find((day) => day.person === person && day.date === iso);
+  return Number(row?.burned) || 0;
+}
+
+function monotonePath(points) {
+  const n = points.length;
+  if (n < 2) return "";
+  const dx = [];
+  const slope = [];
+  const tangent = new Array(n);
+  for (let i = 0; i < n - 1; i++) {
+    dx[i] = points[i + 1].x - points[i].x;
+    slope[i] = (points[i + 1].y - points[i].y) / dx[i];
+  }
+  tangent[0] = slope[0];
+  tangent[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    tangent[i] = slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2;
+  }
+  for (let i = 0; i < n - 1; i++) {
+    if (slope[i] === 0) {
+      tangent[i] = 0;
+      tangent[i + 1] = 0;
+      continue;
+    }
+    const a = tangent[i] / slope[i];
+    const b = tangent[i + 1] / slope[i];
+    const hypot = a * a + b * b;
+    if (hypot > 9) {
+      const scale = 3 / Math.sqrt(hypot);
+      tangent[i] = scale * a * slope[i];
+      tangent[i + 1] = scale * b * slope[i];
+    }
+  }
+  let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const span = dx[i];
+    const c1x = points[i].x + span / 3;
+    const c1y = points[i].y + (tangent[i] * span) / 3;
+    const c2x = points[i + 1].x - span / 3;
+    const c2y = points[i + 1].y - (tangent[i + 1] * span) / 3;
+    path += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${points[i + 1].x.toFixed(1)} ${points[i + 1].y.toFixed(1)}`;
+  }
+  return path;
+}
+
+function logChartSvg(rows, goal) {
+  const W = 360;
+  const H = 176;
+  const L = 48;
+  const R = 8;
+  const T = 14;
+  const B = 22;
+  const values = rows.filter((row) => !row.gap).flatMap((row) => [row.eaten, row.burn]);
+  values.push(Number(goal) || 0);
+  let lo = Math.min(...values);
+  let hi = Math.max(...values);
+  const pad = Math.max(40, (hi - lo) * 0.18);
+  lo = Math.max(0, Math.floor((lo - pad) / 50) * 50);
+  hi = Math.ceil((hi + pad) / 50) * 50;
+  if (hi <= lo) hi = lo + 200;
+  const x = (index) => L + (rows.length === 1 ? (W - L - R) / 2 : (index * (W - L - R)) / (rows.length - 1));
+  const y = (value) => T + ((hi - value) / (hi - lo)) * (H - T - B);
+  const ticks = [];
+  const addTick = (value) => {
+    if (ticks.some((tick) => Math.abs(tick - value) < (hi - lo) * 0.12)) return;
+    ticks.push(value);
+  };
+  addTick(goal);
+  addTick(hi);
+  addTick(lo);
+  const grids = ticks.map((tick) => {
+    const yy = y(tick).toFixed(1);
+    return `<line x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}" stroke="#31382f"></line><text x="${L - 6}" y="${Number(yy) + 3}" fill="#7d8578" font-size="10" text-anchor="end" font-family="Segoe UI, sans-serif">${kcal(tick)}</text>`;
+  }).join("");
+  const months = new Set(rows.map((row) => row.date.slice(0, 7)));
+  const withMonth = months.size > 1 || rows.length > 14;
+  const labelAt = rows.length <= 8
+    ? rows.map((_, index) => index)
+    : [0, 0.25, 0.5, 0.75, 1].map((part) => Math.round(part * (rows.length - 1)));
+  const labels = [...new Set(labelAt)].map((index) => {
+    const iso = rows[index].date;
+    const [, month, day] = iso.split("-").map(Number);
+    const text = withMonth
+      ? new Date(Number(iso.slice(0, 4)), month - 1, day).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      : String(day);
+    return `<text x="${x(index).toFixed(1)}" y="${H - 4}" fill="#7d8578" font-size="10" text-anchor="middle" font-family="Segoe UI, sans-serif">${esc(text)}</text>`;
+  }).join("");
+  const goalY = y(goal).toFixed(1);
+  const goalLine = `<line x1="${L}" y1="${goalY}" x2="${W - R}" y2="${goalY}" stroke="#d7c4a3" stroke-width="1.6" stroke-dasharray="4 3"></line>`;
+  const series = (key, color) => {
+    const segments = [];
+    let current = [];
+    rows.forEach((row, index) => {
+      if (row.gap) {
+        if (current.length) segments.push(current);
+        current = [];
+        return;
+      }
+      current.push({ x: x(index), y: y(row[key]), date: row.date });
+    });
+    if (current.length) segments.push(current);
+    const paths = segments
+      .filter((points) => points.length > 1)
+      .map((points) => `<path d="${monotonePath(points)}" fill="none" stroke="${color}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"></path>`)
+      .join("");
+    const dots = segments.flat().map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="8" fill="transparent" data-date="${esc(point.date)}"></circle><circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.8" fill="${color}" pointer-events="none"></circle>`).join("");
+    return paths + dots;
+  };
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Eaten, burned, and calorie goal">${grids}${labels}${goalLine}${series("burn", "#b7c7a4")}${series("eaten", "#e0a15c")}</svg>`;
+}
+
+function goalDonut(hit, total) {
+  const radius = 36;
+  const turn = 2 * Math.PI * radius;
+  const hitLen = total ? (hit / total) * turn : 0;
+  const restLen = turn - hitLen;
+  const rings = `
+    ${hit < total ? `<circle cx="50" cy="50" r="${radius}" fill="none" stroke="#e07a5f" stroke-width="11" stroke-linecap="butt" stroke-dasharray="${restLen.toFixed(2)} ${turn.toFixed(2)}" stroke-dashoffset="${(-hitLen).toFixed(2)}"></circle>` : ""}
+    ${hit > 0 ? `<circle cx="50" cy="50" r="${radius}" fill="none" stroke="#b7c7a4" stroke-width="11" stroke-linecap="butt" stroke-dasharray="${hitLen.toFixed(2)} ${turn.toFixed(2)}"></circle>` : ""}`;
+  return `<svg viewBox="0 0 100 100" role="img"><g transform="rotate(-90 50 50)">${rings}</g><text x="50" y="48" text-anchor="middle" fill="#f4f1e8" font-size="13" font-weight="700" font-family="Segoe UI, sans-serif">${hit} of ${total}</text><text x="50" y="62" text-anchor="middle" fill="#7d8578" font-size="9" font-family="Segoe UI, sans-serif">on goal</text></svg>`;
+}
+
+function logVisual(byDate, loggedAsc) {
+  const g = goals();
+  const rest = Number(g.restingBurn) || 0;
+  const calendar = logChartDates(loggedAsc, { custom: logRangeCustom, from: logFrom, to: logTo });
+  const rows = calendar.map((iso) => {
+    const entries = byDate.get(iso);
+    if (!entries) return { date: iso, gap: true };
+    const totals = sumEntries(entries);
+    return { date: iso, gap: false, totals, eaten: totals.kcal, burn: chartBurn(activityBurn(iso), rest) };
+  });
+  const logged = rows.filter((row) => !row.gap);
+  const rangeHint = logRangeCustom
+    ? "This chart uses Start and End."
+    : "Last 7 logged days. Change Start or End to chart that range.";
+  const burnHint = rest > 0 ? ` Burned includes ${kcal(rest)} kcal resting.` : "";
+  if (!logged.length) {
+    return `<p class="hint">${esc(logRangeCustom && logFrom > logTo ? "Put the earlier day in Start." : "No logged days in this chart.")}</p>`;
+  }
+  const mean = (pick) => logged.reduce((sum, row) => sum + pick(row), 0) / logged.length;
+  const limitBar = (value, limit, color, mode) => {
+    const amount = Number(value) || 0;
+    const cap = Number(limit) || 0;
+    const over = mode === "max" ? cap && amount > cap : mode === "under" ? cap && amount >= cap : false;
+    const pct = cap ? Math.min(100, (amount / cap) * 100) : 0;
+    return `<div class="bar"><i style="width:${pct}%;background:${over ? "var(--over)" : color}"></i></div>`;
+  };
+  const averages = [
+    ["Calories", `${kcal(mean((row) => row.eaten))}`, `of ${kcal(g.kcal)}`, limitBar(mean((row) => row.eaten), g.kcal, "var(--copper)", "max")],
+    ["Burned", `${kcal(mean((row) => row.burn))}`, rest > 0 ? `includes ${kcal(rest)} rest` : "activity", limitBar(mean((row) => row.burn), g.kcal, "var(--sage)", "show")],
+    ["Protein", `${fmt(mean((row) => row.totals.protein))} g`, `of ${fmt(g.protein)} g`, limitBar(mean((row) => row.totals.protein), g.protein, "var(--sage)", "min")],
+    ["Fat", `${fmt(mean((row) => row.totals.fat))} g`, `of ${fmt(g.fatMax)} g max`, limitBar(mean((row) => row.totals.fat), g.fatMax, "var(--wheat)", "max")],
+    ["Sugar", `${fmt(mean((row) => row.totals.sugar))} g`, `under ${fmt(g.sugarMax)} g`, limitBar(mean((row) => row.totals.sugar), g.sugarMax, "var(--copper)", "under")],
+    ["Carbohydrate", `${fmt(mean((row) => row.totals.carb))} g`, `of ${fmt(g.carbMax)} g max`, limitBar(mean((row) => row.totals.carb), g.carbMax, "var(--sage)", "max")],
+  ].map(([name, value, note, barHtml]) => `<div class="metric"><div class="name">${name}</div><div class="val">${value} <span>${note}</span></div>${barHtml}</div>`).join("");
+  const pies = [
+    ["kcal", "Calories", "at or under the calorie goal", "over the calorie goal"],
+    ["protein", "Protein", "at the protein minimum", "under the protein minimum"],
+    ["fat", "Fat", "at or under the fat maximum", "over the fat maximum"],
+    ["sugar", "Sugar", "under the sugar maximum", "at or over the sugar maximum"],
+    ["carb", "Carbohydrate", "at or under the carbohydrate maximum", "over the carbohydrate maximum"],
+  ].map(([kind, name, yes, no]) => {
+    const hit = logged.filter((row) => onGoal(kind, row.totals, g)).length;
+    return `<div class="pie">${goalDonut(hit, logged.length)}<b>${name}</b><span>${hit} days ${yes}</span><span>${logged.length - hit} days ${no}</span></div>`;
+  }).join("");
+  return `
+    <h2>Calories</h2>
+    <div class="card">
+      <div class="field" style="margin-top:0">
+        <label class="label" for="resting-burn">Resting burn</label>
+        <div class="rest-line"><input class="textin" id="resting-burn" inputmode="numeric" value="${esc(rest)}"><span>kcal added on the chart</span></div>
+      </div>
+      <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span></div>
+      ${logChartSvg(rows, g.kcal)}
+      <p class="hint">${esc(rangeHint + burnHint)} Days with no food are gaps.</p>
+      ${averages}
+    </div>
+    <h2>Days on goal</h2>
+    <div class="pie-grid">${pies}</div>
+    <p class="hint">Sage met the goal. Coral missed it. A day with no food is left out.</p>`;
+}
+
 function dayButton(d, entries) {
   const t = sumEntries(entries);
   return `<button type="button" class="dayrow" data-date="${esc(d)}"><b>${esc(formatDate(d))}</b><span>${kcal(t.kcal)} kcal · ${fmt(t.protein)} g protein · ${fmt(t.fat)} g fat · ${fmt(t.carb)} g carbs</span></button>`;
@@ -432,6 +619,7 @@ function dayButton(d, entries) {
 function logView() {
   const byDate = entriesByDate();
   const dates = [...byDate.keys()].sort().reverse();
+  const loggedAsc = [...dates].reverse();
   if (dates.length) {
     if (!logFrom) logFrom = dates[dates.length - 1];
     if (!logTo) logTo = dates[0];
@@ -460,6 +648,7 @@ function logView() {
       <div class="field"><label class="label" for="log-from">Start</label><input class="textin" id="log-from" type="date" value="${esc(logFrom)}"></div>
       <div class="field"><label class="label" for="log-to">End</label><input class="textin" id="log-to" type="date" value="${esc(logTo)}"></div>
     </div>
+    ${logVisual(byDate, loggedAsc)}
     ${rangeRows ? `<div class="card log-card"><div class="log-days">${rangeRows}</div></div>` : `<p class="hint">${esc(rangeNote)}</p>`}
     <button class="textbtn centerlink" type="button" id="download-range">Download this range</button>`;
 }
@@ -1602,6 +1791,7 @@ function onChange(e) {
     }
     logFrom = "";
     logTo = "";
+    logRangeCustom = false;
     plate = [];
     editingMeal = "";
     supplementChecks = null;
@@ -1638,6 +1828,12 @@ function onChange(e) {
   if (e.target.id === "log-from" || e.target.id === "log-to") {
     logFrom = document.getElementById("log-from")?.value || "";
     logTo = document.getElementById("log-to")?.value || "";
+    logRangeCustom = true;
+    render();
+    return;
+  }
+  if (e.target.id === "resting-burn") {
+    saveGoalField("restingBurn", e.target.value);
     render();
     return;
   }
