@@ -90,6 +90,7 @@ export function defaultGoals() {
     fatMax: 60,
     carbMax: 200,
     sugarMax: 36,
+    fiberMin: 25,
     vitamins: { ...VITAMIN_MIN },
     minerals: { ...MINERAL_MIN },
     supplements: [],
@@ -97,7 +98,7 @@ export function defaultGoals() {
   };
   const exercises = () => ["Push", "Pull, Legs & Abs", "Hiking"];
   return {
-    surya: { ...base, kcal: 2050, protein: 130, restingBurn: 1500, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
+    surya: { ...base, kcal: 2050, protein: 130, fiberMin: 30, restingBurn: 1500, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
     sahi: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
     nonu: { ...base, vitamins: { ...VITAMIN_MIN }, minerals: { ...MINERAL_MIN }, exercises: exercises() },
   };
@@ -325,12 +326,14 @@ export function meanLogged(rows, pick) {
 }
 
 export function onGoal(kind, totals, goals) {
-  const value = Number(totals?.[kind === "carb" ? "carb" : kind === "fat" ? "fat" : kind === "protein" ? "protein" : kind === "sugar" ? "sugar" : "kcal"]) || 0;
+  const fields = { kcal: "kcal", protein: "protein", fat: "fat", carb: "carb", sugar: "sugar", fiber: "fiber" };
+  const value = Number(totals?.[fields[kind] || "kcal"]) || 0;
   if (kind === "kcal") return value <= Number(goals.kcal);
   if (kind === "protein") return value >= Number(goals.protein);
   if (kind === "fat") return value <= Number(goals.fatMax);
   if (kind === "sugar") return value < Number(goals.sugarMax);
   if (kind === "carb") return value <= Number(goals.carbMax);
+  if (kind === "fiber") return value >= Number(goals.fiberMin);
   return false;
 }
 
@@ -442,6 +445,7 @@ export function selfTest(foods) {
   check("calorie goal is a ceiling", onGoal("kcal", { kcal: 2050 }, suryaGoals) && !onGoal("kcal", { kcal: 2051 }, suryaGoals));
   check("protein goal is a minimum", onGoal("protein", { protein: 130 }, suryaGoals) && !onGoal("protein", { protein: 129 }, suryaGoals));
   check("sugar goal is strict", !onGoal("sugar", { sugar: 36 }, suryaGoals) && onGoal("sugar", { sugar: 35 }, suryaGoals));
+  check("fiber goal is a minimum", suryaGoals.fiberMin === 30 && onGoal("fiber", { fiber: 30 }, suryaGoals) && !onGoal("fiber", { fiber: 29 }, suryaGoals));
   const skipped = meanLogged(
     [{ gap: false, eaten: 100 }, { gap: true, eaten: 0 }, { gap: false, eaten: 300 }],
     (row) => row.eaten,

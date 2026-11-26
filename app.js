@@ -319,7 +319,7 @@ function todayView() {
     </div>
     <div class="stats">
       <div class="stat"><b>${fmt(totals.sugar)} g</b><em>Sugar · of ${fmt(g.sugarMax)} g</em></div>
-      <div class="stat"><b>${fmt(totals.fiber)} g</b><em>Fiber</em></div>
+      <div class="stat"><b>${fmt(totals.fiber)} g</b><em>Fiber · of ${fmt(g.fiberMin)} g</em></div>
       <div class="stat"><b>${vit} / ${VITAMINS.length}</b><em>Vitamins</em></div>
       <div class="stat"><b>${min} / ${MINERALS.length}</b><em>Minerals</em></div>
     </div>
@@ -614,7 +614,7 @@ function logVisual(byDate, loggedAsc) {
     ["Fat", `${fmt(mean((row) => row.totals.fat))} g`, `of ${fmt(g.fatMax)} g max`, limitBar(mean((row) => row.totals.fat), g.fatMax, "var(--wheat)", "max")],
     ["Carbs", `${fmt(mean((row) => row.totals.carb))} g`, `of ${fmt(g.carbMax)} g max`, limitBar(mean((row) => row.totals.carb), g.carbMax, "var(--sage)", "max")],
     ["Sugar", `${fmt(mean((row) => row.totals.sugar))} g`, `under ${fmt(g.sugarMax)} g`, limitBar(mean((row) => row.totals.sugar), g.sugarMax, "var(--copper)", "under")],
-    ["Fiber", `${fmt(mean((row) => row.totals.fiber))} g`, "no target", ""],
+    ["Fiber", `${fmt(mean((row) => row.totals.fiber))} g`, `of ${fmt(g.fiberMin)} g`, limitBar(mean((row) => row.totals.fiber), g.fiberMin, "var(--sage)", "min")],
   ].map(([name, value, note, barHtml]) => `<div class="metric"><div class="name">${name}</div><div class="val">${value} <span>${note}</span></div>${barHtml}</div>`).join("");
   const pies = [
     ["kcal", "Calories", "at or under the calorie goal", "over the calorie goal"],
@@ -622,6 +622,7 @@ function logVisual(byDate, loggedAsc) {
     ["fat", "Fat", "at or under the fat maximum", "over the fat maximum"],
     ["carb", "Carbs", "at or under the carb maximum", "over the carb maximum"],
     ["sugar", "Sugar", "under the sugar maximum", "at or over the sugar maximum"],
+    ["fiber", "Fiber", "at the fiber minimum", "under the fiber minimum"],
   ].map(([kind, name, yes, no]) => {
     const hit = logged.filter((row) => onGoal(kind, row.totals, g)).length;
     return `<div class="pie">${goalDonut(hit, logged.length)}<b>${name}</b><span>${hit} days ${yes}</span><span>${logged.length - hit} days ${no}</span></div>`;
@@ -1115,6 +1116,7 @@ function goalsView() {
       ${goalInput("fatMax", "Fat maximum", g.fatMax)}
       ${goalInput("carbMax", "Carbohydrate maximum", g.carbMax)}
       ${goalInput("sugarMax", "Sugar maximum", g.sugarMax)}
+      ${goalInput("fiberMin", "Fiber minimum", g.fiberMin)}
     </div>
     ${exerciseEditor()}
     <p class="hint">A vitamin or mineral counts when today's foods clear the minimum. Empty cells on a food do not count.</p>
