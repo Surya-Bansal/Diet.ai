@@ -126,16 +126,39 @@ async function upsert(table, rows) {
   return rest(table, { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
 }
 
+// PostgREST stops at 1,000 rows. Pages need a stable order or offset skips rows.
+async function restAll(path) {
+  const pageSize = 1000;
+  const rows = [];
+  const seen = new Set();
+  const join = path.includes("?") ? "&" : "?";
+  for (let offset = 0; offset <= 20000; offset += pageSize) {
+    const { data, error } = await rest(`${path}${join}limit=${pageSize}&offset=${offset}`);
+    if (error) return { error };
+    const batch = data || [];
+    if (!batch.length) break;
+    const first = batch[0];
+    const marker = first.id != null ? String(first.id) : `${first.person}|${first.date}`;
+    if (seen.has(marker)) {
+      return { error: { message: "The log pages repeated, so the full log was not loaded." } };
+    }
+    seen.add(marker);
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return { data: rows };
+}
+
 export async function pullRemote(seedFoods) {
-  const [foods, entries, days, goals] = await Promise.all([
-    rest("foods?select=id,data"),
-    rest("entries?select=id,data"),
-    rest("days?select=person,date,exercise,burned,steps,minutes"),
-    rest("goals?select=person,data"),
+  const [foods, entries, goals] = await Promise.all([
+    restAll("foods?select=id,data&order=id.asc"),
+    restAll("entries?select=id,data&order=id.asc"),
+    restAll("goals?select=person,data&order=person.asc"),
   ]);
+  let days = await restAll("days?select=person,date,exercise,burned,steps,minutes&order=person.asc,date.asc");
   let dayRows = days;
   if (dayRows.error && /steps|minutes|column|schema cache/i.test(dayRows.error.message || "")) {
-    dayRows = await rest("days?select=person,date,exercise,burned");
+    dayRows = await restAll("days?select=person,date,exercise,burned&order=person.asc,date.asc");
   }
   const error = foods.error || entries.error || dayRows.error || goals.error;
   if (error) return { mode: "local", state: null, error: explainRemoteError(error) };

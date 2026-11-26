@@ -2,7 +2,7 @@ import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
   scaleFood, sumEntries, hitCount, foodsText, mealGroups, orderedEntries, microValue, referenceAmount,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
-  chartBurn, logChartDates, onGoal,
+  chartBurn, logChartDates, onGoal, meanLogged,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
 import {
@@ -568,7 +568,7 @@ function logVisual(byDate, loggedAsc) {
   if (!logged.length) {
     return `<p class="hint">${esc(logRangeCustom && logFrom > logTo ? "Put the earlier day in Start." : "No logged days in this chart.")}</p>`;
   }
-  const mean = (pick) => logged.reduce((sum, row) => sum + pick(row), 0) / logged.length;
+  const mean = (pick) => meanLogged(rows, pick);
   const limitBar = (value, limit, color, mode) => {
     const amount = Number(value) || 0;
     const cap = Number(limit) || 0;
@@ -578,18 +578,19 @@ function logVisual(byDate, loggedAsc) {
   };
   const averages = [
     ["Calories", `${kcal(mean((row) => row.eaten))}`, `of ${kcal(g.kcal)}`, limitBar(mean((row) => row.eaten), g.kcal, "var(--copper)", "max")],
-    ["Burned", `${kcal(mean((row) => row.burn))}`, rest > 0 ? `includes ${kcal(rest)} rest` : "activity", limitBar(mean((row) => row.burn), g.kcal, "var(--sage)", "show")],
+    ["Burned", `${kcal(mean((row) => row.burn))}`, rest > 0 ? "with resting" : "activity", limitBar(mean((row) => row.burn), g.kcal, "var(--sage)", "show")],
     ["Protein", `${fmt(mean((row) => row.totals.protein))} g`, `of ${fmt(g.protein)} g`, limitBar(mean((row) => row.totals.protein), g.protein, "var(--sage)", "min")],
     ["Fat", `${fmt(mean((row) => row.totals.fat))} g`, `of ${fmt(g.fatMax)} g max`, limitBar(mean((row) => row.totals.fat), g.fatMax, "var(--wheat)", "max")],
+    ["Carbs", `${fmt(mean((row) => row.totals.carb))} g`, `of ${fmt(g.carbMax)} g max`, limitBar(mean((row) => row.totals.carb), g.carbMax, "var(--sage)", "max")],
     ["Sugar", `${fmt(mean((row) => row.totals.sugar))} g`, `under ${fmt(g.sugarMax)} g`, limitBar(mean((row) => row.totals.sugar), g.sugarMax, "var(--copper)", "under")],
-    ["Carbohydrate", `${fmt(mean((row) => row.totals.carb))} g`, `of ${fmt(g.carbMax)} g max`, limitBar(mean((row) => row.totals.carb), g.carbMax, "var(--sage)", "max")],
+    ["Fiber", `${fmt(mean((row) => row.totals.fiber))} g`, "no target", ""],
   ].map(([name, value, note, barHtml]) => `<div class="metric"><div class="name">${name}</div><div class="val">${value} <span>${note}</span></div>${barHtml}</div>`).join("");
   const pies = [
     ["kcal", "Calories", "at or under the calorie goal", "over the calorie goal"],
     ["protein", "Protein", "at the protein minimum", "under the protein minimum"],
     ["fat", "Fat", "at or under the fat maximum", "over the fat maximum"],
+    ["carb", "Carbs", "at or under the carb maximum", "over the carb maximum"],
     ["sugar", "Sugar", "under the sugar maximum", "at or over the sugar maximum"],
-    ["carb", "Carbohydrate", "at or under the carbohydrate maximum", "over the carbohydrate maximum"],
   ].map(([kind, name, yes, no]) => {
     const hit = logged.filter((row) => onGoal(kind, row.totals, g)).length;
     return `<div class="pie">${goalDonut(hit, logged.length)}<b>${name}</b><span>${hit} days ${yes}</span><span>${logged.length - hit} days ${no}</span></div>`;
@@ -597,13 +598,9 @@ function logVisual(byDate, loggedAsc) {
   return `
     <h2>Calories</h2>
     <div class="card">
-      <div class="field" style="margin-top:0">
-        <label class="label" for="resting-burn">Resting burn</label>
-        <div class="rest-line"><input class="textin" id="resting-burn" inputmode="numeric" value="${esc(rest)}"><span>kcal added on the chart</span></div>
-      </div>
       <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span></div>
       ${logChartSvg(rows, g.kcal)}
-      <p class="hint">${esc(rangeHint + burnHint)} Days with no food are gaps.</p>
+      <p class="hint">${esc(rangeHint + burnHint)} Days with no food are left out of the averages.</p>
       ${averages}
     </div>
     <h2>Days on goal</h2>
@@ -1832,11 +1829,6 @@ function onChange(e) {
     render();
     return;
   }
-  if (e.target.id === "resting-burn") {
-    saveGoalField("restingBurn", e.target.value);
-    render();
-    return;
-  }
   if (e.target.id === "nf-cat") { render(); return; }
   if (e.target.id === "category") {
     draft.category = e.target.value;
@@ -2017,6 +2009,24 @@ async function runE2E() {
 
 if (params.has("selftest")) {
   const lines = selfTest(foodsSeed);
+  const synthetic = [];
+  for (let i = 0; i < 125; i++) {
+    const cursor = new Date(2026, 6, 25 + i);
+    const date = todayISO(cursor);
+    const gap = date === "2026-10-29" || (date >= "2026-09-14" && date <= "2026-09-16");
+    synthetic.push(gap
+      ? { date, gap: true }
+      : { date, gap: false, eaten: 1700 + (i % 20) * 35, burn: 2100 + (i % 13) * 25 });
+  }
+  const svg = logChartSvg(synthetic, 2050);
+  const loggedN = synthetic.filter((row) => !row.gap).length;
+  const copper = (svg.match(/fill="#e0a15c"/g) || []).length;
+  const sage = (svg.match(/fill="#b7c7a4"/g) || []).length;
+  const sep = (svg.match(/data-date="2026-09-/g) || []).length / 2;
+  const oct = (svg.match(/data-date="2026-10-/g) || []).length / 2;
+  const finite = !svg.includes("NaN") && !svg.includes("Infinity");
+  lines.push(`${copper === loggedN && sage === loggedN && finite ? "PASS" : "FAIL"} long chart draws every logged day copper ${copper} sage ${sage} of ${loggedN}`);
+  lines.push(`${sep === 27 && oct === 30 ? "PASS" : "FAIL"} long chart keeps September and October sep ${sep} oct ${oct}`);
   app.innerHTML = `<pre id="selftest">${lines.join("\n")}</pre>`;
 } else {
   app.addEventListener("click", onClick);

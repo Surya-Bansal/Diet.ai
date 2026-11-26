@@ -277,6 +277,12 @@ export function logChartDates(loggedAsc, { custom = false, from = "", to = "", c
   return datesBetween(from, to);
 }
 
+export function meanLogged(rows, pick) {
+  const logged = (rows || []).filter((row) => row && !row.gap);
+  if (!logged.length) return 0;
+  return logged.reduce((sum, row) => sum + (Number(pick(row)) || 0), 0) / logged.length;
+}
+
 export function onGoal(kind, totals, goals) {
   const value = Number(totals?.[kind === "carb" ? "carb" : kind === "fat" ? "fat" : kind === "protein" ? "protein" : kind === "sugar" ? "sugar" : "kcal"]) || 0;
   if (kind === "kcal") return value <= Number(goals.kcal);
@@ -391,5 +397,10 @@ export function selfTest(foods) {
   check("calorie goal is a ceiling", onGoal("kcal", { kcal: 2050 }, suryaGoals) && !onGoal("kcal", { kcal: 2051 }, suryaGoals));
   check("protein goal is a minimum", onGoal("protein", { protein: 130 }, suryaGoals) && !onGoal("protein", { protein: 129 }, suryaGoals));
   check("sugar goal is strict", !onGoal("sugar", { sugar: 36 }, suryaGoals) && onGoal("sugar", { sugar: 35 }, suryaGoals));
+  const skipped = meanLogged(
+    [{ gap: false, eaten: 100 }, { gap: true, eaten: 0 }, { gap: false, eaten: 300 }],
+    (row) => row.eaten,
+  );
+  check("averages skip days with no food", skipped === 200, skipped);
   return lines;
 }
