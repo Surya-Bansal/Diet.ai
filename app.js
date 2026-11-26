@@ -761,10 +761,7 @@ function foodsView() {
     ? `${mine.length} foods. This list is Nonu's. Surya and Sahi do not see it.`
     : `${mine.length} foods. Shared by Surya and Sahi. Nonu has her own list.`;
   const rows = list.slice(0, 40).map((f) => `
-      <div class="menu-row">
-        <button type="button" class="dayrow" data-edit="${esc(f.id)}"><b>${esc(f.name)}</b><span>${esc(f.category)} · ${esc(f.servingLabel)} · ${kcal(f.kcal)} kcal${f.approx ? " · approximate" : ""}</span></button>
-        <button type="button" class="textbtn danger" data-delete-food="${esc(f.id)}">Delete</button>
-      </div>
+      <button type="button" class="dayrow" data-edit="${esc(f.id)}"><b>${esc(f.name)}</b><span>${esc(f.category)} · ${esc(f.servingLabel)} · ${kcal(f.kcal)} kcal${f.approx ? " · approximate" : ""}</span></button>
     `).join("");
   return `
     <h1>Menu</h1>
@@ -1490,8 +1487,6 @@ function onClick(e) {
     return;
   }
   if (e.target.id === "delete-food") { deleteFood(editingId); return; }
-  const foodDelete = e.target.closest("[data-delete-food]");
-  if (foodDelete) { deleteFood(foodDelete.dataset.deleteFood); return; }
   const del = e.target.closest("[data-del]");
   if (del) { deleteEntry(del.dataset.del); return; }
   const mealEdit = e.target.closest("[data-meal-edit]");
