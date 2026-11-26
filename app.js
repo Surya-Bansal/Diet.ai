@@ -2,7 +2,7 @@ import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
   scaleFood, sumEntries, hitCount, foodsText, mealGroups, orderedEntries, microValue, referenceAmount,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
-  chartBurn, logChartDates, onGoal, meanLogged,
+  chartBurn, logChartDates, onGoal, meanLogged, chartSlice, nearestChartIndex,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
 import {
@@ -37,6 +37,10 @@ let editingMeal = "";
 let logFrom = "";
 let logTo = "";
 let logRangeCustom = false;
+let chartOpen = false;
+let chartLo = 0;
+let chartHi = -1;
+let chartRows = [];
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -473,15 +477,18 @@ function monotonePath(points) {
   return path;
 }
 
-function logChartSvg(rows, goal) {
-  const W = 360;
-  const H = 176;
-  const L = 48;
-  const R = 8;
-  const T = 14;
-  const B = 22;
+function logChartSvg(rows, goal, { wide = false } = {}) {
+  if (!rows.length) return "";
+  const W = wide ? 720 : 360;
+  const H = wide ? 320 : 176;
+  const L = wide ? 56 : 48;
+  const R = wide ? 16 : 8;
+  const T = wide ? 16 : 14;
+  const B = wide ? 28 : 22;
+  const font = wide ? 13 : 10;
   const values = rows.filter((row) => !row.gap).flatMap((row) => [row.eaten, row.burn]);
   values.push(Number(goal) || 0);
+  if (values.length === 1) values.push(0);
   let lo = Math.min(...values);
   let hi = Math.max(...values);
   const pad = Math.max(40, (hi - lo) * 0.18);
@@ -500,7 +507,7 @@ function logChartSvg(rows, goal) {
   addTick(lo);
   const grids = ticks.map((tick) => {
     const yy = y(tick).toFixed(1);
-    return `<line x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}" stroke="#31382f"></line><text x="${L - 6}" y="${Number(yy) + 3}" fill="#7d8578" font-size="10" text-anchor="end" font-family="Segoe UI, sans-serif">${kcal(tick)}</text>`;
+    return `<line x1="${L}" y1="${yy}" x2="${W - R}" y2="${yy}" stroke="#31382f"></line><text x="${L - 6}" y="${Number(yy) + 3}" fill="#7d8578" font-size="${font}" text-anchor="end" font-family="Segoe UI, sans-serif">${kcal(tick)}</text>`;
   }).join("");
   const months = new Set(rows.map((row) => row.date.slice(0, 7)));
   const withMonth = months.size > 1 || rows.length > 14;
@@ -513,7 +520,7 @@ function logChartSvg(rows, goal) {
     const text = withMonth
       ? new Date(Number(iso.slice(0, 4)), month - 1, day).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
       : String(day);
-    return `<text x="${x(index).toFixed(1)}" y="${H - 4}" fill="#7d8578" font-size="10" text-anchor="middle" font-family="Segoe UI, sans-serif">${esc(text)}</text>`;
+    return `<text x="${x(index).toFixed(1)}" y="${H - 6}" fill="#7d8578" font-size="${font}" text-anchor="middle" font-family="Segoe UI, sans-serif">${esc(text)}</text>`;
   }).join("");
   const goalY = y(goal).toFixed(1);
   const goalLine = `<line x1="${L}" y1="${goalY}" x2="${W - R}" y2="${goalY}" stroke="#d7c4a3" stroke-width="1.6" stroke-dasharray="4 3"></line>`;
@@ -533,10 +540,20 @@ function logChartSvg(rows, goal) {
       .filter((points) => points.length > 1)
       .map((points) => `<path d="${monotonePath(points)}" fill="none" stroke="${color}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"></path>`)
       .join("");
-    const dots = segments.flat().map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="8" fill="transparent" data-date="${esc(point.date)}"></circle><circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.8" fill="${color}" pointer-events="none"></circle>`).join("");
+    const dots = segments.flat().map((point) => {
+      const visible = `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${wide ? 4.2 : 2.8}" fill="${color}" pointer-events="none"></circle>`;
+      if (wide) return visible;
+      return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="8" fill="transparent" data-date="${esc(point.date)}"></circle>${visible}`;
+    }).join("");
     return paths + dots;
   };
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Eaten, burned, and calorie goal">${grids}${labels}${goalLine}${series("burn", "#b7c7a4")}${series("eaten", "#e0a15c")}</svg>`;
+  const plot = W - L - R;
+  const guide = wide
+    ? `<line id="chart-land-guide" x1="${L}" y1="${T}" x2="${L}" y2="${H - B}" stroke="#f4f1e8" stroke-width="1.2" opacity="0" pointer-events="none"></line><rect x="${L}" y="${T}" width="${plot}" height="${H - T - B}" fill="transparent"></rect>`
+    : "";
+  const id = wide ? ` id="chart-land-svg"` : "";
+  const data = wide ? ` data-left="${L}" data-plot="${plot}" data-count="${rows.length}"` : "";
+  return `<svg class="chart${wide ? " land" : ""}"${id}${data} viewBox="0 0 ${W} ${H}" role="img" aria-label="Eaten, burned, and calorie goal">${grids}${labels}${goalLine}${series("burn", "#b7c7a4")}${series("eaten", "#e0a15c")}${guide}</svg>`;
 }
 
 function goalDonut(hit, total) {
@@ -550,23 +567,37 @@ function goalDonut(hit, total) {
   return `<svg viewBox="0 0 100 100" role="img"><g transform="rotate(-90 50 50)">${rings}</g><text x="50" y="48" text-anchor="middle" fill="#f4f1e8" font-size="13" font-weight="700" font-family="Segoe UI, sans-serif">${hit} of ${total}</text><text x="50" y="62" text-anchor="middle" fill="#7d8578" font-size="9" font-family="Segoe UI, sans-serif">on goal</text></svg>`;
 }
 
+function magnifierButton() {
+  return `<button type="button" class="iconbtn" id="chart-expand" aria-label="Open landscape chart"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"></circle><path d="M15.2 15.2 L20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></button>`;
+}
+
 function logVisual(byDate, loggedAsc) {
   const g = goals();
   const rest = Number(g.restingBurn) || 0;
-  const calendar = logChartDates(loggedAsc, { custom: logRangeCustom, from: logFrom, to: logTo });
+  const calendar = logChartDates(loggedAsc, { custom: logRangeCustom, from: logFrom, to: logTo, end: todayISO() });
   const rows = calendar.map((iso) => {
     const entries = byDate.get(iso);
     if (!entries) return { date: iso, gap: true };
     const totals = sumEntries(entries);
     return { date: iso, gap: false, totals, eaten: totals.kcal, burn: chartBurn(activityBurn(iso), rest) };
   });
+  chartRows = rows;
   const logged = rows.filter((row) => !row.gap);
   const rangeHint = logRangeCustom
     ? "This chart uses Start and End."
-    : "Last 7 logged days. Change Start or End to chart that range.";
+    : "Last 7 days. Change Start or End to chart that range.";
   const burnHint = rest > 0 ? ` Burned includes ${kcal(rest)} kcal resting.` : "";
+  if (!rows.length) {
+    return `<p class="hint">${esc(logRangeCustom && logFrom > logTo ? "Put the earlier day in Start." : "No days in this chart.")}</p>`;
+  }
   if (!logged.length) {
-    return `<p class="hint">${esc(logRangeCustom && logFrom > logTo ? "Put the earlier day in Start." : "No logged days in this chart.")}</p>`;
+    return `
+      <h2>Calories</h2>
+      <div class="card">
+        <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span>${magnifierButton()}</div>
+        ${logChartSvg(rows, g.kcal)}
+        <p class="hint">${esc(rangeHint + burnHint)} These days have no food, so there is no average.</p>
+      </div>`;
   }
   const mean = (pick) => meanLogged(rows, pick);
   const limitBar = (value, limit, color, mode) => {
@@ -598,7 +629,7 @@ function logVisual(byDate, loggedAsc) {
   return `
     <h2>Calories</h2>
     <div class="card">
-      <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span></div>
+      <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span>${magnifierButton()}</div>
       ${logChartSvg(rows, g.kcal)}
       <p class="hint">${esc(rangeHint + burnHint)} Days with no food are left out of the averages.</p>
       ${averages}
@@ -606,6 +637,109 @@ function logVisual(byDate, loggedAsc) {
     <h2>Days on goal</h2>
     <div class="pie-grid">${pies}</div>
     <p class="hint">Sage met the goal. Coral missed it. A day with no food is left out.</p>`;
+}
+
+function landscapePop() {
+  const rows = chartRows;
+  if (!rows.length) return "";
+  const [lo, hi] = chartSlice(rows.length, chartLo, chartHi < 0 ? rows.length - 1 : chartHi);
+  chartLo = lo;
+  chartHi = hi;
+  const slice = rows.slice(lo, hi + 1);
+  const g = goals();
+  const rotate = window.innerHeight > window.innerWidth;
+  const fromLabel = formatDate(slice[0].date);
+  const toLabel = formatDate(slice[slice.length - 1].date);
+  const max = Math.max(0, rows.length - 1);
+  const leftPct = max ? (lo / max) * 100 : 0;
+  const widthPct = max ? ((hi - lo) / max) * 100 : 100;
+  return `
+    <div class="chart-pop${rotate ? " rotate" : ""}" id="chart-pop">
+      <div class="chart-pop-stage">
+        <div class="chart-pop-head">
+          <div class="legend-row"><span><i style="background:#e0a15c"></i>Eaten</span><span><i style="background:#b7c7a4"></i>Burned</span><span><i class="dash"></i>Goal ${kcal(g.kcal)}</span></div>
+          <button type="button" class="textbtn" id="chart-close">Close</button>
+        </div>
+        <div class="chart-readout" id="chart-readout"><b>Touch a day</b><span>The date, eaten, and burned show here.</span></div>
+        ${logChartSvg(slice, g.kcal, { wide: true })}
+        <div class="slice">
+          <div class="slice-track"></div>
+          <div class="slice-span" id="chart-slice-span" style="left:${leftPct}%;width:${widthPct}%"></div>
+          <input type="range" id="chart-slice-a" min="0" max="${max}" value="${lo}" aria-label="First day of the slice">
+          <input type="range" id="chart-slice-b" min="0" max="${max}" value="${hi}" aria-label="Last day of the slice">
+        </div>
+        <p class="hint" id="chart-slice-label">${esc(fromLabel)} – ${esc(toLabel)}. Drag either handle to zoom.</p>
+      </div>
+    </div>`;
+}
+
+function applyChartSliceFromInputs() {
+  const a = document.getElementById("chart-slice-a");
+  const b = document.getElementById("chart-slice-b");
+  const svg = document.getElementById("chart-land-svg");
+  if (!a || !b || !chartRows.length) return;
+  const [lo, hi] = chartSlice(chartRows.length, a.value, b.value);
+  chartLo = lo;
+  chartHi = hi;
+  const slice = chartRows.slice(lo, hi + 1);
+  if (svg) svg.outerHTML = logChartSvg(slice, goals().kcal, { wide: true });
+  const label = document.getElementById("chart-slice-label");
+  if (label) label.textContent = `${formatDate(slice[0].date)} – ${formatDate(slice[slice.length - 1].date)}. Drag either handle to zoom.`;
+  const span = document.getElementById("chart-slice-span");
+  const max = Math.max(1, chartRows.length - 1);
+  if (span) {
+    span.style.left = `${(lo / max) * 100}%`;
+    span.style.width = `${((hi - lo) / max) * 100}%`;
+  }
+  const readout = document.getElementById("chart-readout");
+  if (readout) readout.innerHTML = "<b>Touch a day</b><span>The date, eaten, and burned show here.</span>";
+}
+
+function updateChartReadout(svg, e) {
+  const pt = svg.createSVGPoint();
+  pt.x = e.clientX;
+  pt.y = e.clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return;
+  const local = pt.matrixTransform(ctm.inverse());
+  const index = nearestChartIndex(local.x, svg.dataset.left, svg.dataset.plot, svg.dataset.count);
+  const slice = chartRows.slice(chartLo, chartHi + 1);
+  const row = slice[index];
+  if (!row) return;
+  const n = slice.length;
+  const left = Number(svg.dataset.left) || 0;
+  const plot = Number(svg.dataset.plot) || 0;
+  const x = n <= 1 ? left + plot / 2 : left + (index * plot) / (n - 1);
+  const guide = document.getElementById("chart-land-guide");
+  if (guide) {
+    guide.setAttribute("x1", x.toFixed(1));
+    guide.setAttribute("x2", x.toFixed(1));
+    guide.setAttribute("opacity", "0.9");
+  }
+  const readout = document.getElementById("chart-readout");
+  if (!readout) return;
+  const rest = Number(goals().restingBurn) || 0;
+  let eaten = `${kcal(row.eaten)} kcal`;
+  let burn = `${kcal(row.burn)} kcal`;
+  if (row.gap) {
+    const activity = activityBurn(row.date);
+    eaten = "No food";
+    burn = activity ? `${kcal(chartBurn(activity, rest))} kcal` : "—";
+  }
+  readout.innerHTML = `<b>${esc(formatDate(row.date))}</b><span><i class="eaten"></i>Eaten ${esc(eaten)}</span><span><i class="burned"></i>Burned ${esc(burn)}</span>`;
+}
+
+function onChartPointer(e) {
+  const svg = document.getElementById("chart-land-svg");
+  if (!svg || !chartOpen) return;
+  const onSvg = e.target.closest && e.target.closest("#chart-land-svg");
+  if (e.type === "pointerdown") {
+    if (!onSvg) return;
+    try { svg.setPointerCapture(e.pointerId); } catch { /* already released */ }
+  } else if (!onSvg && !(svg.hasPointerCapture && svg.hasPointerCapture(e.pointerId))) {
+    return;
+  }
+  updateChartReadout(svg, e);
 }
 
 function dayButton(d, entries) {
@@ -1051,7 +1185,10 @@ function render() {
     today: todayView, add: addView, search: searchView, foods: foodsView, log: logView, goals: goalsView,
   }[view] || todayView;
   const active = view === "search" ? (searchReturn === "foods" ? "foods" : "add") : view;
-  app.innerHTML = `<div class="screen">${html()}${notice ? `<p class="warn">${esc(notice)}</p>` : ""}</div>${nav(active)}`;
+  const body = html();
+  const pop = chartOpen && view === "log" ? landscapePop() : "";
+  document.body.classList.toggle("chart-open", Boolean(pop));
+  app.innerHTML = `<div class="screen">${body}${notice ? `<p class="warn">${esc(notice)}</p>` : ""}</div>${pop}${nav(active)}`;
   const next = document.querySelector(".screen");
   const targetId = scrollTarget;
   scrollTarget = "";
@@ -1574,8 +1711,21 @@ function applyPreview() {
 }
 
 function onClick(e) {
+  if (e.target.closest("#chart-expand")) {
+    chartOpen = true;
+    chartLo = 0;
+    chartHi = -1;
+    render();
+    return;
+  }
+  if (e.target.closest("#chart-close")) {
+    chartOpen = false;
+    render();
+    return;
+  }
   const navBtn = e.target.closest("[data-nav]");
   if (navBtn) {
+    chartOpen = false;
     const next = navBtn.dataset.nav;
     const keepPlate = next === "search" || (next === "add" && (view === "add" || view === "search"));
     if (!keepPlate) {
@@ -1789,6 +1939,9 @@ function onChange(e) {
     logFrom = "";
     logTo = "";
     logRangeCustom = false;
+    chartOpen = false;
+    chartLo = 0;
+    chartHi = -1;
     plate = [];
     editingMeal = "";
     supplementChecks = null;
@@ -1826,6 +1979,8 @@ function onChange(e) {
     logFrom = document.getElementById("log-from")?.value || "";
     logTo = document.getElementById("log-to")?.value || "";
     logRangeCustom = true;
+    chartLo = 0;
+    chartHi = -1;
     render();
     return;
   }
@@ -1869,6 +2024,10 @@ function onChange(e) {
 }
 
 function onInput(e) {
+  if (e.target.id === "chart-slice-a" || e.target.id === "chart-slice-b") {
+    applyChartSliceFromInputs();
+    return;
+  }
   const plateAmount = e.target.closest("[data-plate-amount]");
   if (plateAmount) {
     const index = Number(plateAmount.dataset.plateAmount);
@@ -2032,6 +2191,19 @@ if (params.has("selftest")) {
   app.addEventListener("click", onClick);
   app.addEventListener("change", onChange);
   app.addEventListener("input", onInput);
+  app.addEventListener("pointerdown", onChartPointer);
+  app.addEventListener("pointermove", onChartPointer);
+  window.addEventListener("resize", () => {
+    const pop = document.getElementById("chart-pop");
+    if (!pop) return;
+    pop.classList.toggle("rotate", window.innerHeight > window.innerWidth);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && chartOpen) {
+      chartOpen = false;
+      render();
+    }
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && mode === "shared") boot();
   });

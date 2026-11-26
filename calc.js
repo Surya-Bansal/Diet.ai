@@ -267,14 +267,55 @@ export function datesBetween(from, to) {
   return out;
 }
 
-export function logChartDates(loggedAsc, { custom = false, from = "", to = "", count = 7 } = {}) {
+function shiftISO(iso, days) {
+  const [y, m, d] = String(iso || "").split("-").map(Number);
+  if (!y || !m || !d) return "";
+  const cursor = new Date(y, m - 1, d);
+  cursor.setDate(cursor.getDate() + days);
+  return todayISO(cursor);
+}
+
+export function logChartDates(loggedAsc, { custom = false, from = "", to = "", count = 7, end = "" } = {}) {
+  if (custom) return datesBetween(from, to);
   const logged = (loggedAsc || []).filter(Boolean);
-  if (!logged.length) return [];
-  if (!custom) {
-    const last = logged.slice(-count);
-    return datesBetween(last[0], last[last.length - 1]);
+  const anchor = end || logged[logged.length - 1] || "";
+  if (!anchor) return [];
+  const days = Math.max(1, Number(count) || 7);
+  return datesBetween(shiftISO(anchor, 1 - days), anchor);
+}
+
+export function chartSlice(count, start, end) {
+  const n = Math.max(0, Math.trunc(Number(count) || 0));
+  if (n <= 1) return [0, 0];
+  const minSpan = 1;
+  let lo = Math.round(Number(start));
+  let hi = Math.round(Number(end));
+  if (!Number.isFinite(lo)) lo = 0;
+  if (!Number.isFinite(hi)) hi = n - 1;
+  if (lo > hi) [lo, hi] = [hi, lo];
+  lo = Math.max(0, Math.min(n - 1, lo));
+  hi = Math.max(0, Math.min(n - 1, hi));
+  if (hi - lo >= minSpan) return [lo, hi];
+  const mid = (lo + hi) / 2;
+  lo = Math.round(mid - minSpan / 2);
+  hi = lo + minSpan;
+  if (lo < 0) {
+    lo = 0;
+    hi = minSpan;
   }
-  return datesBetween(from, to);
+  if (hi > n - 1) {
+    hi = n - 1;
+    lo = hi - minSpan;
+  }
+  return [lo, hi];
+}
+
+export function nearestChartIndex(x, left, plotWidth, count) {
+  const n = Math.max(0, Math.trunc(Number(count) || 0));
+  if (n <= 1) return 0;
+  const width = Number(plotWidth) || 0;
+  const t = width ? (Number(x) - Number(left)) / width : 0;
+  return Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
 }
 
 export function meanLogged(rows, pick) {
@@ -391,8 +432,12 @@ export function selfTest(foods) {
   check("surya resting burn is 1500", defaultGoals().surya.restingBurn === 1500 && defaultGoals().sahi.restingBurn === 0);
   check("chart burn adds rest", chartBurn(420, 1500) === 1920, chartBurn(420, 1500));
   const logged = ["2026-11-01", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-08", "2026-11-09", "2026-11-10"];
-  check("chart defaults to the last 7 logged days", logChartDates(logged).join(",") === "2026-11-03,2026-11-04,2026-11-05,2026-11-06,2026-11-07,2026-11-08,2026-11-09,2026-11-10");
+  check("chart defaults to the last 7 days", logChartDates(logged, { end: "2026-11-10" }).join(",") === "2026-11-04,2026-11-05,2026-11-06,2026-11-07,2026-11-08,2026-11-09,2026-11-10");
+  check("last 7 days include days with no log", logChartDates(["2026-11-01", "2026-11-03"], { end: "2026-11-05" }).join(",") === "2026-10-30,2026-10-31,2026-11-01,2026-11-02,2026-11-03,2026-11-04,2026-11-05");
   check("custom chart range keeps gaps", logChartDates(logged, { custom: true, from: "2026-11-01", to: "2026-11-04" }).join(",") === "2026-11-01,2026-11-02,2026-11-03,2026-11-04");
+  check("slice keeps the handles in order", chartSlice(30, 20, 8).join(",") === "8,20");
+  check("slice stays at least two days", chartSlice(30, 10, 10).join(",") === "10,11");
+  check("nearest day follows the finger", nearestChartIndex(100, 0, 200, 5) === 2);
   const suryaGoals = defaultGoals().surya;
   check("calorie goal is a ceiling", onGoal("kcal", { kcal: 2050 }, suryaGoals) && !onGoal("kcal", { kcal: 2051 }, suryaGoals));
   check("protein goal is a minimum", onGoal("protein", { protein: 130 }, suryaGoals) && !onGoal("protein", { protein: 129 }, suryaGoals));
