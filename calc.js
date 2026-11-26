@@ -226,10 +226,21 @@ export function foodsText(entries) {
   }).join("; ");
 }
 
+export function orderedEntries(entries) {
+  const rank = (meal) => {
+    const index = MEALS.indexOf(meal);
+    return index < 0 ? MEALS.length : index;
+  };
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((a, b) => rank(a.entry.meal) - rank(b.entry.meal) || a.index - b.index)
+    .map((row) => row.entry);
+}
+
 export function mealGroups(entries) {
   const order = [];
   const map = new Map();
-  for (const e of entries) {
+  for (const e of orderedEntries(entries)) {
     if (!map.has(e.meal)) {
       map.set(e.meal, []);
       order.push(e.meal);
@@ -327,5 +338,12 @@ export function selfTest(foods) {
   const freshGoals = defaultGoals();
   check("exercise sets start as three", freshGoals.surya.exercises.join("|") === "Push|Pull, Legs & Abs|Hiking");
   check("exercise lists stay separate", freshGoals.sahi.exercises.length === 3 && freshGoals.nonu.exercises.length === 3);
+  const ordered = orderedEntries([
+    { meal: "Lunch", name: "later" },
+    { meal: "Breakfast", name: "first" },
+    { meal: "Snack", name: "mid" },
+    { meal: "Breakfast", name: "second" },
+  ]).map((entry) => `${entry.meal}:${entry.name}`);
+  check("meals stay in breakfast to protocol order", ordered.join("|") === "Breakfast:first|Breakfast:second|Lunch:later|Snack:mid", ordered.join("|"));
   return lines;
 }

@@ -1,12 +1,12 @@
 import {
   PEOPLE, MEALS, VITAMINS, MINERALS, defaultGoals, listForPerson, normalizeFood,
-  scaleFood, sumEntries, hitCount, foodsText, mealGroups, microValue, referenceAmount,
+  scaleFood, sumEntries, hitCount, foodsText, mealGroups, orderedEntries, microValue, referenceAmount,
   todayISO, formatDate, fatTotal, carbTotal, fromLabelTotals, selfTest, round1,
 } from "./calc.js";
 import { searchDishes, searchSaved, searchOpenFoodFacts, searchUsda } from "./search.js";
 import {
   loadLocal, saveLocal, loadConfig, saveConfig, pullRemote, pushFood, pushEntry,
-  removeEntryRemote, pushDay, pushGoals, resetClient,
+  removeEntryRemote, removeFoodRemote, pushDay, pushGoals, resetClient,
 } from "./store.js";
 import foodsSeed from "./data/foods.json" with { type: "json" };
 import dishesData from "./data/dishes.json" with { type: "json" };
@@ -267,7 +267,7 @@ function bar(value, goal, color, maxed) {
 }
 
 function todayView() {
-  const entries = dayEntries();
+  const entries = orderedEntries(dayEntries());
   const totals = sumEntries(entries);
   const g = goals();
   const meta = dayMeta();
@@ -323,13 +323,7 @@ function todayView() {
 }
 
 function mealList(entries) {
-  const groups = mealGroups(entries).slice().sort((a, b) => {
-    const rank = (meal) => {
-      const index = MEALS.indexOf(meal);
-      return index < 0 ? MEALS.length : index;
-    };
-    return rank(a.meal) - rank(b.meal);
-  });
+  const groups = mealGroups(entries);
   return groups.map((group) => {
     const foods = group.entries.map((entry) => `
       <div class="entry">
@@ -432,7 +426,7 @@ function entriesByDate() {
 
 function dayButton(d, entries) {
   const t = sumEntries(entries);
-  return `<button type="button" class="dayrow" data-date="${esc(d)}"><b>${esc(formatDate(d))}</b><br><span>${kcal(t.kcal)} kcal · ${fmt(t.protein)} g protein · ${fmt(t.fat)} g fat · ${fmt(t.carb)} g carbs</span></button>`;
+  return `<button type="button" class="dayrow" data-date="${esc(d)}"><b>${esc(formatDate(d))}</b><span>${kcal(t.kcal)} kcal · ${fmt(t.protein)} g protein · ${fmt(t.fat)} g fat · ${fmt(t.carb)} g carbs</span></button>`;
 }
 
 function logView() {
@@ -466,7 +460,7 @@ function logView() {
       <div class="field"><label class="label" for="log-from">Start</label><input class="textin" id="log-from" type="date" value="${esc(logFrom)}"></div>
       <div class="field"><label class="label" for="log-to">End</label><input class="textin" id="log-to" type="date" value="${esc(logTo)}"></div>
     </div>
-    ${rangeRows ? `<div class="card">${rangeRows}</div>` : `<p class="hint">${esc(rangeNote)}</p>`}
+    ${rangeRows ? `<div class="card log-card"><div class="log-days">${rangeRows}</div></div>` : `<p class="hint">${esc(rangeNote)}</p>`}
     <button class="textbtn centerlink" type="button" id="download-range">Download this range</button>`;
 }
 
@@ -724,7 +718,10 @@ function confirmForm(heading = "Confirm this serving", buttonId = "save-food", b
   const unit = f.servingUnit === "ml" || f.servingUnit === "count" ? f.servingUnit : "g";
   return `
     <div class="card" id="food-editor">
-      <div class="label">${esc(heading)}</div>
+      <div class="editor-head">
+        <div class="label">${esc(heading)}</div>
+        ${buttonId === "update-food" ? `<button class="textbtn danger" type="button" id="delete-food">Delete dish</button>` : ""}
+      </div>
       <div class="field"><label class="label">Name</label><input class="textin" id="nf-name" value="${esc(f.name)}"></div>
       ${categoryChoices(f.category, !!f.newCategory)}
       <div class="pair">
@@ -764,7 +761,10 @@ function foodsView() {
     ? `${mine.length} foods. This list is Nonu's. Surya and Sahi do not see it.`
     : `${mine.length} foods. Shared by Surya and Sahi. Nonu has her own list.`;
   const rows = list.slice(0, 40).map((f) => `
-      <button type="button" class="dayrow" data-edit="${esc(f.id)}"><b>${esc(f.name)}</b><br><span>${esc(f.category)} · ${esc(f.servingLabel)} · ${kcal(f.kcal)} kcal${f.approx ? " · approximate" : ""}</span></button>
+      <div class="menu-row">
+        <button type="button" class="dayrow" data-edit="${esc(f.id)}"><b>${esc(f.name)}</b><span>${esc(f.category)} · ${esc(f.servingLabel)} · ${kcal(f.kcal)} kcal${f.approx ? " · approximate" : ""}</span></button>
+        <button type="button" class="textbtn danger" data-delete-food="${esc(f.id)}">Delete</button>
+      </div>
     `).join("");
   return `
     <h1>Menu</h1>
@@ -1169,6 +1169,23 @@ async function deleteEntry(id) {
   render();
 }
 
+async function deleteFood(id) {
+  const food = state.foods.find((item) => item.id === id);
+  if (!food) return;
+  const logged = state.entries.some((entry) => entry.foodId === id);
+  const warning = logged
+    ? `Delete ${food.name} from the menu? Meals already logged keep their numbers.`
+    : `Delete ${food.name} from the menu?`;
+  if (!window.confirm(warning)) return;
+  state.foods = state.foods.filter((item) => item.id !== id);
+  if (editingId === id) editingId = "";
+  lookup.form = null;
+  persist();
+  await cloud(() => removeFoodRemote(id));
+  notice = "Dish deleted.";
+  render();
+}
+
 function zeroSnapshot(entry) {
   return ["kcal", "protein", "fatUnsat", "fatSat", "carbOther", "sugar", "fiber"]
     .every((key) => !Number(entry[key]));
@@ -1472,6 +1489,9 @@ function onClick(e) {
     render();
     return;
   }
+  if (e.target.id === "delete-food") { deleteFood(editingId); return; }
+  const foodDelete = e.target.closest("[data-delete-food]");
+  if (foodDelete) { deleteFood(foodDelete.dataset.deleteFood); return; }
   const del = e.target.closest("[data-del]");
   if (del) { deleteEntry(del.dataset.del); return; }
   const mealEdit = e.target.closest("[data-meal-edit]");

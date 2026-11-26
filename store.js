@@ -181,6 +181,11 @@ export async function removeEntryRemote(id) {
   if (error) throw new Error(explainRemoteError(error));
 }
 
+export async function removeFoodRemote(id) {
+  const { error } = await rest(`foods?id=eq.${encodeURIComponent(id)}`, { method: "DELETE", prefer: "return=minimal" });
+  if (error) throw new Error(explainRemoteError(error));
+}
+
 export async function pushDay(day) {
   const row = {
     person: day.person,
