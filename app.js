@@ -41,6 +41,9 @@ let chartOpen = false;
 let chartLo = 0;
 let chartHi = -1;
 let chartRows = [];
+let sliceDrag = "";
+let paintedLo = -1;
+let paintedHi = -1;
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
@@ -651,9 +654,11 @@ function landscapePop() {
   const rotate = window.innerHeight > window.innerWidth;
   const fromLabel = formatDate(slice[0].date);
   const toLabel = formatDate(slice[slice.length - 1].date);
-  const max = Math.max(0, rows.length - 1);
-  const leftPct = max ? (lo / max) * 100 : 0;
-  const widthPct = max ? ((hi - lo) / max) * 100 : 100;
+  const max = Math.max(1, rows.length - 1);
+  const leftPct = (lo / max) * 100;
+  const endPct = (hi / max) * 100;
+  paintedLo = lo;
+  paintedHi = hi;
   return `
     <div class="chart-pop${rotate ? " rotate" : ""}" id="chart-pop">
       <div class="chart-pop-stage">
@@ -663,37 +668,116 @@ function landscapePop() {
         </div>
         <div class="chart-readout" id="chart-readout"><b>Touch a day</b><span>The date, eaten, and burned show here.</span></div>
         ${logChartSvg(slice, g.kcal, { wide: true })}
-        <div class="slice">
+        <div class="slice" id="chart-slice">
           <div class="slice-track"></div>
-          <div class="slice-span" id="chart-slice-span" style="left:${leftPct}%;width:${widthPct}%"></div>
-          <input type="range" id="chart-slice-a" min="0" max="${max}" value="${lo}" aria-label="First day of the slice">
-          <input type="range" id="chart-slice-b" min="0" max="${max}" value="${hi}" aria-label="Last day of the slice">
+          <div class="slice-span" id="chart-slice-span" style="left:${leftPct}%;width:${endPct - leftPct}%"></div>
+          <button type="button" class="slice-handle" id="chart-slice-a" data-slice="a" style="left:${leftPct}%" aria-label="First day of the slice"></button>
+          <button type="button" class="slice-handle" id="chart-slice-b" data-slice="b" style="left:${endPct}%" aria-label="Last day of the slice"></button>
+          <svg class="slice-map" id="chart-slice-svg" viewBox="0 0 100 44" preserveAspectRatio="none" aria-hidden="true"><rect width="100" height="44" fill="none"></rect></svg>
         </div>
         <p class="hint" id="chart-slice-label">${esc(fromLabel)} – ${esc(toLabel)}. Drag either handle to zoom.</p>
       </div>
     </div>`;
 }
 
-function applyChartSliceFromInputs() {
-  const a = document.getElementById("chart-slice-a");
-  const b = document.getElementById("chart-slice-b");
-  const svg = document.getElementById("chart-land-svg");
-  if (!a || !b || !chartRows.length) return;
-  const [lo, hi] = chartSlice(chartRows.length, a.value, b.value);
+function sliceFraction(e) {
+  const svg = document.getElementById("chart-slice-svg");
+  if (!svg) return null;
+  const pt = svg.createSVGPoint();
+  pt.x = e.clientX;
+  pt.y = e.clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return null;
+  const local = pt.matrixTransform(ctm.inverse());
+  const width = svg.viewBox.baseVal.width || 100;
+  return Math.min(1, Math.max(0, local.x / width));
+}
+
+function applyChartSlice(activeFraction) {
+  if (!chartRows.length) return;
+  const max = Math.max(1, chartRows.length - 1);
+  const [lo, hi] = chartSlice(chartRows.length, chartLo, chartHi < 0 ? chartRows.length - 1 : chartHi);
   chartLo = lo;
   chartHi = hi;
-  const slice = chartRows.slice(lo, hi + 1);
-  if (svg) svg.outerHTML = logChartSvg(slice, goals().kcal, { wide: true });
-  const label = document.getElementById("chart-slice-label");
-  if (label) label.textContent = `${formatDate(slice[0].date)} – ${formatDate(slice[slice.length - 1].date)}. Drag either handle to zoom.`;
-  const span = document.getElementById("chart-slice-span");
-  const max = Math.max(1, chartRows.length - 1);
-  if (span) {
-    span.style.left = `${(lo / max) * 100}%`;
-    span.style.width = `${((hi - lo) / max) * 100}%`;
+  if (lo !== paintedLo || hi !== paintedHi) {
+    paintedLo = lo;
+    paintedHi = hi;
+    const slice = chartRows.slice(lo, hi + 1);
+    const svg = document.getElementById("chart-land-svg");
+    if (svg) svg.outerHTML = logChartSvg(slice, goals().kcal, { wide: true });
+    const label = document.getElementById("chart-slice-label");
+    if (label) label.textContent = `${formatDate(slice[0].date)} – ${formatDate(slice[slice.length - 1].date)}. Drag either handle to zoom.`;
+    const readout = document.getElementById("chart-readout");
+    if (readout) readout.innerHTML = "<b>Touch a day</b><span>The date, eaten, and burned show here.</span>";
   }
-  const readout = document.getElementById("chart-readout");
-  if (readout) readout.innerHTML = "<b>Touch a day</b><span>The date, eaten, and burned show here.</span>";
+  const a = document.getElementById("chart-slice-a");
+  const b = document.getElementById("chart-slice-b");
+  let aPct = (lo / max) * 100;
+  let bPct = (hi / max) * 100;
+  if (activeFraction != null && sliceDrag === "a") aPct = activeFraction * 100;
+  if (activeFraction != null && sliceDrag === "b") bPct = activeFraction * 100;
+  if (a) {
+    a.style.left = `${aPct}%`;
+    a.style.zIndex = sliceDrag === "a" ? "2" : "1";
+  }
+  if (b) {
+    b.style.left = `${bPct}%`;
+    b.style.zIndex = sliceDrag === "b" ? "2" : "1";
+  }
+  const span = document.getElementById("chart-slice-span");
+  if (span) {
+    const left = Math.min(aPct, bPct);
+    span.style.left = `${left}%`;
+    span.style.width = `${Math.max(0, Math.max(aPct, bPct) - left)}%`;
+  }
+}
+
+function moveSlice(e) {
+  const fraction = sliceFraction(e);
+  if (fraction == null || !chartRows.length || !sliceDrag) return;
+  const max = Math.max(0, chartRows.length - 1);
+  const index = Math.round(fraction * max);
+  let lo = chartLo;
+  let hi = chartHi < 0 ? max : chartHi;
+  if (sliceDrag === "a") lo = index;
+  else hi = index;
+  if (lo > hi) sliceDrag = sliceDrag === "a" ? "b" : "a";
+  const next = chartSlice(chartRows.length, lo, hi);
+  chartLo = next[0];
+  chartHi = next[1];
+  applyChartSlice(fraction);
+}
+
+function onSlicePointer(e) {
+  if (!chartOpen) return;
+  if (e.type === "pointerdown") {
+    const handle = e.target.closest && e.target.closest("[data-slice]");
+    if (!handle) return;
+    sliceDrag = handle.dataset.slice;
+    try { handle.setPointerCapture(e.pointerId); } catch { /* already released */ }
+    e.preventDefault();
+    moveSlice(e);
+    return;
+  }
+  if (!sliceDrag) return;
+  if (e.type === "pointerup" || e.type === "pointercancel") {
+    sliceDrag = "";
+    applyChartSlice(null);
+    return;
+  }
+  moveSlice(e);
+}
+
+function onSliceKey(e) {
+  const handle = e.target.closest && e.target.closest("[data-slice]");
+  if (!handle || !chartOpen) return false;
+  const dir = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0;
+  if (!dir) return false;
+  e.preventDefault();
+  if (handle.dataset.slice === "a") chartLo += dir;
+  else chartHi += dir;
+  applyChartSlice(null);
+  return true;
 }
 
 function updateChartReadout(svg, e) {
@@ -1722,12 +1806,14 @@ function onClick(e) {
   }
   if (e.target.closest("#chart-close")) {
     chartOpen = false;
+    sliceDrag = "";
     render();
     return;
   }
   const navBtn = e.target.closest("[data-nav]");
   if (navBtn) {
     chartOpen = false;
+    sliceDrag = "";
     const next = navBtn.dataset.nav;
     const keepPlate = next === "search" || (next === "add" && (view === "add" || view === "search"));
     if (!keepPlate) {
@@ -1942,6 +2028,7 @@ function onChange(e) {
     logTo = "";
     logRangeCustom = false;
     chartOpen = false;
+    sliceDrag = "";
     chartLo = 0;
     chartHi = -1;
     plate = [];
@@ -2026,10 +2113,6 @@ function onChange(e) {
 }
 
 function onInput(e) {
-  if (e.target.id === "chart-slice-a" || e.target.id === "chart-slice-b") {
-    applyChartSliceFromInputs();
-    return;
-  }
   const plateAmount = e.target.closest("[data-plate-amount]");
   if (plateAmount) {
     const index = Number(plateAmount.dataset.plateAmount);
@@ -2195,14 +2278,20 @@ if (params.has("selftest")) {
   app.addEventListener("input", onInput);
   app.addEventListener("pointerdown", onChartPointer);
   app.addEventListener("pointermove", onChartPointer);
+  app.addEventListener("pointerdown", onSlicePointer);
+  app.addEventListener("pointermove", onSlicePointer);
+  app.addEventListener("pointerup", onSlicePointer);
+  app.addEventListener("pointercancel", onSlicePointer);
   window.addEventListener("resize", () => {
     const pop = document.getElementById("chart-pop");
     if (!pop) return;
     pop.classList.toggle("rotate", window.innerHeight > window.innerWidth);
   });
   document.addEventListener("keydown", (e) => {
+    if (onSliceKey(e)) return;
     if (e.key === "Escape" && chartOpen) {
       chartOpen = false;
+      sliceDrag = "";
       render();
     }
   });

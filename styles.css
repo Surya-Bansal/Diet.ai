@@ -158,37 +158,33 @@ body.chart-open { overflow: hidden; }
 .chart-readout i { display: inline-block; width: 14px; height: 3px; border-radius: 99px; margin-right: 6px; vertical-align: middle; }
 .chart-readout i.eaten { background: var(--copper); }
 .chart-readout i.burned { background: var(--sage); }
-.slice { position: relative; height: 36px; margin: 2px 4px 0; }
-.slice-track, .slice-span { position: absolute; top: 16px; height: 4px; border-radius: 99px; }
+.slice { position: relative; height: 44px; margin: 2px 8px 0; touch-action: none; }
+.slice-track, .slice-span { position: absolute; top: 20px; height: 4px; border-radius: 99px; pointer-events: none; }
 .slice-track { left: 0; right: 0; background: var(--line); }
 .slice-span { background: var(--copper); }
-.slice input[type="range"] {
+.slice-map { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.slice-handle {
   position: absolute;
-  left: 0;
-  width: 100%;
   top: 0;
-  margin: 0;
-  height: 36px;
-  background: none;
-  pointer-events: none;
-  appearance: none;
+  width: 44px;
+  height: 44px;
+  margin-left: -22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  touch-action: none;
 }
-.slice input[type="range"]::-webkit-slider-thumb {
-  pointer-events: auto;
-  appearance: none;
-  width: 22px;
-  height: 22px;
+.slice-handle::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
   border-radius: 50%;
   background: var(--text);
   border: 2px solid var(--copper);
-}
-.slice input[type="range"]::-moz-range-thumb {
-  pointer-events: auto;
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--copper);
-  border-radius: 50%;
-  background: var(--text);
 }
 .pie-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .pie { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 8px 8px 12px; text-align: center; }
