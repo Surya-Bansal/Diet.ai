@@ -114,9 +114,48 @@ function writeExercises(list) {
   cloud(() => pushGoals(person, next));
 }
 
+let stateVersion = 0;
+let saveTimer = 0;
+let dayTimer = 0;
+let pendingDay = null;
+let pulling = false;
+let lastPull = 0;
+
 function persist() {
+  stateVersion += 1;
   if (preview) return;
+  if (mode !== "shared") {
+    flushLocal();
+    return;
+  }
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(flushLocal, 400);
+}
+
+function flushLocal() {
+  clearTimeout(saveTimer);
+  saveTimer = 0;
+  if (preview || !state) return;
   saveLocal(state);
+}
+
+function queueDayPush(day) {
+  pendingDay = day;
+  clearTimeout(dayTimer);
+  dayTimer = setTimeout(flushDayPush, 400);
+}
+
+function flushDayPush() {
+  clearTimeout(dayTimer);
+  dayTimer = 0;
+  const day = pendingDay;
+  pendingDay = null;
+  if (day) cloud(() => pushDay(day));
+}
+
+function flushPending() {
+  flushLocal();
+  flushDayPush();
 }
 
 async function cloud(fn) {
@@ -1597,8 +1636,7 @@ function zeroSnapshot(entry) {
     .every((key) => !Number(entry[key]));
 }
 
-function entryUnitNeedsRepair(entry) {
-  const food = state.foods.find((f) => f.id === entry.foodId);
+function entryUnitNeedsRepair(entry, food) {
   if (!food || food.unit !== "count" || entry.unit === "count") return false;
   if (entry.unit === "g" && Number(food.servingGrams) > 0) return false;
   if (!(Number(entry.amount) > 0)) return false;
@@ -1606,14 +1644,17 @@ function entryUnitNeedsRepair(entry) {
 }
 
 async function repairEntryUnits() {
+  const foods = new Map(state.foods.map((food) => [food.id, food]));
   const fixed = [];
-  state.entries = state.entries.map((entry) => {
-    if (!entryUnitNeedsRepair(entry)) return entry;
-    const food = state.foods.find((f) => f.id === entry.foodId);
+  for (let i = 0; i < state.entries.length; i++) {
+    const entry = state.entries[i];
+    const food = foods.get(entry.foodId);
+    if (!entryUnitNeedsRepair(entry, food)) continue;
+    if (!fixed.length) state.entries = state.entries.slice();
     const next = { ...entry, unit: "count", ...scaleFood(food, entry.amount, "count") };
+    state.entries[i] = next;
     fixed.push(next);
-    return next;
-  });
+  }
   if (!fixed.length) return;
   persist();
   for (const entry of fixed) await cloud(() => pushEntry(entry));
@@ -1680,23 +1721,25 @@ function saveDayFromInputs(source) {
   if (index >= 0) state.days[index] = day;
   else state.days.push(day);
   persist();
-  cloud(() => pushDay(day));
+  queueDayPush(day);
 }
 
 async function repairStepOnlyBurn() {
   const changed = [];
-  state.days = state.days.map((day) => {
+  for (let i = 0; i < state.days.length; i++) {
+    const day = state.days[i];
     const minutes = Number(day.minutes) || 0;
-    if (!minutes) return day;
+    if (!minutes) continue;
     const stepsOnly = activityCalories(day.steps, 0, "");
     const burned = Number(day.burned) || 0;
-    if (Math.abs(burned - stepsOnly) >= 0.05) return day;
+    if (Math.abs(burned - stepsOnly) >= 0.05) continue;
     const next = activityCalories(day.steps, minutes, day.exercise);
-    if (Math.abs(next - burned) < 0.05) return day;
+    if (Math.abs(next - burned) < 0.05) continue;
+    if (!changed.length) state.days = state.days.slice();
     const updated = { ...day, burned: next };
+    state.days[i] = updated;
     changed.push(updated);
-    return updated;
-  });
+  }
   if (!changed.length) return;
   persist();
   for (const day of changed) await cloud(() => pushDay(day));
@@ -1729,14 +1772,17 @@ function download(filename, text, type) {
 function downloadLog(from, to) {
   const header = ["Date", "Exercise", "Steps", "Cal_burned", "Calories", "Protein", "Fat_unsat", "Fat_sat", "Carb_other", "Sugar", "Fibre", "Fat", "Carbohydrate", "Vitamins", "Minerals", "Foods"];
   const lines = [header.join(",")];
-  const keys = new Set(state.entries.filter((e) => e.person === person).map((e) => e.date));
-  for (const day of state.days) if (day.person === person) keys.add(day.date);
-  const rows = [...keys].sort().filter((when) => (!from || when >= from) && (!to || when <= to));
+  const byDate = entriesByDate();
+  const dayByDate = new Map();
+  for (const day of state.days) {
+    if (day.person === person) dayByDate.set(day.date, day);
+  }
+  const rows = [...new Set([...byDate.keys(), ...dayByDate.keys()])].sort().filter((when) => (!from || when >= from) && (!to || when <= to));
+  const g = state.goals[person] || defaultGoals()[person];
   for (const when of rows) {
-    const entries = state.entries.filter((e) => e.person === person && e.date === when);
+    const entries = byDate.get(when) || [];
     const totals = sumEntries(entries);
-    const g = state.goals[person] || defaultGoals()[person];
-    const meta = state.days.find((d) => d.person === person && d.date === when) || {};
+    const meta = dayByDate.get(when) || {};
     const cells = [
       when, meta.exercise || "", meta.steps || 0, meta.burned || 0, round1(totals.kcal), totals.protein,
       totals.fatUnsat, totals.fatSat, totals.carbOther, totals.sugar, totals.fiber,
@@ -2161,6 +2207,64 @@ async function applyBundledConfig() {
   }
 }
 
+function mergeRemoteDays(remoteDays, localDays) {
+  const local = new Map(localDays.map((day) => [`${day.person}|${day.date}`, day]));
+  return remoteDays.map((day) => {
+    if (day.steps != null && day.minutes != null) return day;
+    const previous = local.get(`${day.person}|${day.date}`);
+    if (!previous) return { ...day, steps: day.steps || 0, minutes: day.minutes || 0 };
+    return {
+      ...day,
+      steps: day.steps == null ? (previous.steps || 0) : day.steps,
+      minutes: day.minutes == null ? (previous.minutes || 0) : day.minutes,
+    };
+  });
+}
+
+async function refreshRemote() {
+  if (pulling || preview) return;
+  pulling = true;
+  const version = stateVersion;
+  let stale = false;
+  try {
+    const remote = await pullRemote(foodsSeed);
+    if (version !== stateVersion) {
+      stale = true;
+      return;
+    }
+    if (remote.state) {
+      const localDays = state.days;
+      state = remote.state;
+      state.days = mergeRemoteDays(state.days, localDays);
+      mode = "shared";
+      syncError = "";
+      lastPull = Date.now();
+      flushLocal();
+      await repairEntryUnits();
+      await repairStepOnlyBurn();
+      flushLocal();
+    } else if (mode !== "shared") {
+      mode = "local";
+      syncError = remote.error || "";
+      await repairEntryUnits();
+      await repairStepOnlyBurn();
+    } else {
+      syncError = remote.error || "";
+    }
+  } catch (err) {
+    if (version !== stateVersion) {
+      stale = true;
+      return;
+    }
+    syncError = err.message || String(err);
+    if (mode !== "shared") mode = "local";
+  } finally {
+    pulling = false;
+    ready = true;
+    if (!stale) render();
+  }
+}
+
 async function boot() {
   await applyBundledConfig();
   state = loadLocal(foodsSeed);
@@ -2170,49 +2274,21 @@ async function boot() {
     applyPreview();
   }
   if (!PEOPLE.some((p) => p.id === person)) person = "surya";
-  await repairEntryUnits();
-  await repairStepOnlyBurn();
-  render();
-  if (params.has("e2e")) {
-    ready = true;
-    await runE2E();
-    return;
-  }
-  if (preview) {
+  if (preview || params.has("e2e")) {
+    await repairEntryUnits();
+    await repairStepOnlyBurn();
+    render();
+    if (params.has("e2e")) {
+      ready = true;
+      await runE2E();
+      return;
+    }
     ready = true;
     render();
     return;
   }
-  try {
-    const remote = await pullRemote(foodsSeed);
-    if (remote.state) {
-      const localDays = state.days;
-      state = remote.state;
-      state.days = state.days.map((day) => {
-        if (day.steps != null && day.minutes != null) return day;
-        const local = localDays.find((item) => item.person === day.person && item.date === day.date);
-        if (!local) return { ...day, steps: day.steps || 0, minutes: day.minutes || 0 };
-        return {
-          ...day,
-          steps: day.steps == null ? (local.steps || 0) : day.steps,
-          minutes: day.minutes == null ? (local.minutes || 0) : day.minutes,
-        };
-      });
-      mode = "shared";
-      syncError = "";
-      saveLocal(state);
-      await repairEntryUnits();
-      await repairStepOnlyBurn();
-    } else {
-      mode = "local";
-      syncError = remote.error || "";
-    }
-  } catch (err) {
-    mode = "local";
-    syncError = err.message || String(err);
-  }
-  ready = true;
   render();
+  await refreshRemote();
 }
 
 async function runE2E() {
@@ -2296,7 +2372,13 @@ if (params.has("selftest")) {
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && mode === "shared") boot();
+    if (document.visibilityState === "hidden") {
+      flushPending();
+      return;
+    }
+    // A full reload is about 1 MB. Skip it when this phone just loaded the log.
+    if (mode === "shared" && Date.now() - lastPull > 15000) refreshRemote();
   });
+  window.addEventListener("pagehide", flushPending);
   boot();
 }

@@ -150,12 +150,12 @@ async function restAll(path) {
 }
 
 export async function pullRemote(seedFoods) {
-  const [foods, entries, goals] = await Promise.all([
+  const [foods, entries, goals, days] = await Promise.all([
     restAll("foods?select=id,data&order=id.asc"),
     restAll("entries?select=id,data&order=id.asc"),
     restAll("goals?select=person,data&order=person.asc"),
+    restAll("days?select=person,date,exercise,burned,steps,minutes&order=person.asc,date.asc"),
   ]);
-  let days = await restAll("days?select=person,date,exercise,burned,steps,minutes&order=person.asc,date.asc");
   let dayRows = days;
   if (dayRows.error && /steps|minutes|column|schema cache/i.test(dayRows.error.message || "")) {
     dayRows = await restAll("days?select=person,date,exercise,burned&order=person.asc,date.asc");
